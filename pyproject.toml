@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=61.0.0", "wheel", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,3 +20,6 @@ optional-dependencies.test = {file = ["requirements-test.txt"]}
 
 [tool.pip-tools]
 generate-hashes = true
+
+[tool.setuptools_scm]
+local_scheme = "dirty-tag"
