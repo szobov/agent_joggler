@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent_joggler"
+
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT License"}
+description = "Multi-agent Path Planning environment with online task assignment"
+authors = [{name = "Sergei Zobov"}]
+maintainers = [{name = "Sergei Zobov"}]
+dynamic = ["version", "dependencies", "optional-dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.in"]}
+optional-dependencies.test = {file = ["requirements-test.txt"]}
+
+
+[tool.pip-tools]
+generate-hashes = true
