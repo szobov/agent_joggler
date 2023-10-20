@@ -8,6 +8,7 @@ from .internal_types import (
     Environment,
     Heuristic,
     Node,
+    TimeT,
     NodeState,
     ReservationTableT,
     PriorityQueueItem,
@@ -88,6 +89,7 @@ class OpenSet:
 def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
     agent_path: dict[Agent, _t.Sequence[Node]] = {}
     for agent in env.agents:
+        time_step: TimeT = 0
         open_set = OpenSet()
         came_from: dict[Node, Node] = dict()
         # For node n, gScore[n] is the cost of the cheapest path
@@ -106,22 +108,27 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
         open_set.add(PriorityQueueItem(f_score[agent.position], agent.position))
 
         while len(open_set):
-            current_node = open_set.pop()
-            if current_node.node == agent.goal:
-                path = reconstruct_path(came_from, current_node.node)
+            current_node_with_priority = open_set.pop()
+            if current_node_with_priority.node == agent.goal:
+                path = reconstruct_path(came_from, current_node_with_priority.node)
                 agent_path[agent] = path
                 break
-            for neighbor_node in get_neighbors(env, current_node.node):
+            for neighbor_node in get_neighbors(env, current_node_with_priority.node):
                 # d(current,neighbor) is the weight of the edge from
                 # current to neighbor tentative_g_score is the distance
                 # from start to the neighbor through current
-                tentative_g_score = g_score[current_node.node] + edge_cost(
-                    env, current_node.node, neighbor_node
-                )
+                tentative_g_score = g_score[
+                    current_node_with_priority.node
+                ] + edge_cost(env, current_node_with_priority.node, neighbor_node)
+
+                # TODO: figure out how to deal with time table
+                # it seems like I need to add time_step in open_set?
+                # Or is it enough by checking reservation table in get_neighbours and
+                # mark the path as reserved only in reconstruct path?
 
                 if tentative_g_score >= g_score.get(neighbor_node, float("inf")):
                     continue
-                came_from[neighbor_node] = current_node.node
+                came_from[neighbor_node] = current_node_with_priority.node
                 g_score[neighbor_node] = tentative_g_score
                 node_f_score = tentative_g_score + heuristic(
                     Heuristic.MANHATTAN_DISTANCE, neighbor_node, agent.goal
