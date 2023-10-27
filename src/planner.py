@@ -8,6 +8,7 @@ from .internal_types import (
     Environment,
     Heuristic,
     Node,
+    NodeWithTime,
     TimeT,
     NodeState,
     ReservationTableT,
@@ -29,18 +30,17 @@ def heuristic(heuristic_type: Heuristic, left: Node, right: Node) -> float:
             return 0.0
 
 
-# Try first: create a graph from evironment?
 def make_reservation_table() -> ReservationTableT:
     return {}
 
 
 # https://en.wikipedia.org/wiki/A*_search_algorithm
 def reconstruct_path(
-    came_from_node_list: _t.Any, current_node: _t.Any
-) -> _t.Sequence[Node]:
+    came_from_node_map: dict[NodeWithTime, NodeWithTime], current_node: NodeWithTime
+) -> _t.Sequence[NodeWithTime]:
     total_path = [current_node]
-    while current_node in came_from_node_list.keys():
-        current_node = came_from_node_list.pop(current_node)
+    while current_node in came_from_node_map.keys():
+        current_node = came_from_node_map.pop(current_node)
         total_path.append(current_node)
     return list(reversed(total_path))
 
@@ -86,12 +86,74 @@ class OpenSet:
         return len(self.item_queue)
 
 
+def reserve_nodes(
+    reservation_table: ReservationTableT,
+    agent: Agent,
+    node_from: NodeWithTime,
+    node_to: NodeWithTime,
+    time_step: TimeT,
+) -> None:
+    key = (node_from.to_node(), node_to.to_node(), time_step)
+    assert key not in reservation_table, f"{key=}, {reservation_table=}, {agent=}"
+    reservation_table[key] = agent
+
+
+def follow_path(
+    path: _t.Sequence[NodeWithTime], reservation_table: ReservationTableT, agent: Agent
+):
+    for prev_node, next_node in zip(path, path[1:]):
+        assert (
+            prev_node.time_step != next_node.time_step
+        ), f"{prev_node.time_step} != {next_node.time_step}"
+
+        for wait_time_step in range(prev_node.time_step, next_node.time_step):
+            reserve_nodes(
+                reservation_table,
+                agent,
+                prev_node,
+                prev_node,
+                wait_time_step,
+            )
+        reserve_nodes(
+            reservation_table,
+            agent,
+            prev_node,
+            next_node,
+            next_node.time_step,
+        )
+        reserve_nodes(
+            reservation_table,
+            agent,
+            next_node,
+            prev_node,
+            next_node.time_step,
+        )
+    last_node = path[-1]
+    reserve_nodes(
+        reservation_table,
+        agent,
+        last_node,
+        last_node,
+        last_node.time_step,
+    )
+
+
+def time_expand_path(path: _t.Sequence[NodeWithTime]) -> _t.Sequence[Node]:
+    expanded_path: list[Node] = []
+    for prev_node, next_node in zip(path, path[1:]):
+        for _ in range(prev_node.time_step, next_node.time_step):
+            expanded_path.append(prev_node.to_node())
+    expanded_path.append(path[-1].to_node())
+    return expanded_path
+
+
 def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
-    agent_path: dict[Agent, _t.Sequence[Node]] = {}
+    agents_paths: dict[Agent, _t.Sequence[Node]] = {}
+    reservation_table = make_reservation_table()
     for agent in env.agents:
         time_step: TimeT = 0
         open_set = OpenSet()
-        came_from: dict[Node, Node] = dict()
+        came_from: dict[NodeWithTime, NodeWithTime] = dict()
         # For node n, gScore[n] is the cost of the cheapest path
         # from start to n currently known.
         g_score = dict()
@@ -100,35 +162,77 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
         # For node n, fScore[n] := gScore[n] + h(n).
         # fScore[n] represents our current best guess as to
         # how short a path from start to finish can be if it goes through n.
+        #
+        # TODO: should time_step be counted as heuristic?
         f_score = dict()
         f_score[agent.position] = heuristic(
             Heuristic.MANHATTAN_DISTANCE, agent.position, agent.goal
         )
 
-        open_set.add(PriorityQueueItem(f_score[agent.position], agent.position))
+        open_set.add(
+            PriorityQueueItem(
+                f_score[agent.position],
+                NodeWithTime.from_node(agent.position, time_step),
+            )
+        )
 
         while len(open_set):
             current_node_with_priority = open_set.pop()
-            if current_node_with_priority.node == agent.goal:
-                path = reconstruct_path(came_from, current_node_with_priority.node)
-                agent_path[agent] = path
+            current_node = current_node_with_priority.node
+            if current_node_with_priority.node.to_node() == agent.goal:
+                path = reconstruct_path(came_from, current_node)
+                follow_path(path, reservation_table, agent)
+                agents_paths[agent] = time_expand_path(path)
                 break
-            for neighbor_node in get_neighbors(env, current_node_with_priority.node):
+            for neighbor_node in get_neighbors(env, current_node):
+                next_time_step = current_node.time_step + 1
+
+                def _need_wait(time_step: TimeT, curr_node: Node, next_node: Node):
+                    is_next_node_occupied = (
+                        next_node,
+                        next_node,
+                        time_step,
+                    ) in reservation_table
+                    is_edge_occpuied = (
+                        curr_node,
+                        next_node,
+                        time_step,
+                    ) in reservation_table
+                    return is_edge_occpuied or is_next_node_occupied
+
+                is_current_node_reserved = False
+                while _need_wait(next_time_step, current_node.to_node(), neighbor_node):
+                    if (
+                        current_node.to_node(),
+                        current_node.to_node(),
+                        next_time_step,
+                    ) in reservation_table:
+                        is_current_node_reserved = True
+                        break
+                    next_time_step += 1
+                if is_current_node_reserved:
+                    continue
+                wait_time = next_time_step - current_node.time_step
                 # d(current,neighbor) is the weight of the edge from
                 # current to neighbor tentative_g_score is the distance
                 # from start to the neighbor through current
-                tentative_g_score = g_score[
-                    current_node_with_priority.node
-                ] + edge_cost(env, current_node_with_priority.node, neighbor_node)
+                tentative_g_score = (
+                    g_score[current_node_with_priority.node.to_node()]
+                    + edge_cost(env, current_node_with_priority.node, neighbor_node)
+                    + wait_time
+                )
 
                 # TODO: figure out how to deal with time table
                 # it seems like I need to add time_step in open_set?
                 # Or is it enough by checking reservation table in get_neighbours and
                 # mark the path as reserved only in reconstruct path?
+                #
 
                 if tentative_g_score >= g_score.get(neighbor_node, float("inf")):
                     continue
-                came_from[neighbor_node] = current_node_with_priority.node
+                came_from[
+                    NodeWithTime.from_node(neighbor_node, next_time_step)
+                ] = current_node
                 g_score[neighbor_node] = tentative_g_score
                 node_f_score = tentative_g_score + heuristic(
                     Heuristic.MANHATTAN_DISTANCE, neighbor_node, agent.goal
@@ -136,11 +240,16 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
                 f_score[neighbor_node] = node_f_score
 
                 open_set.add(
-                    PriorityQueueItem(node=neighbor_node, f_score=node_f_score)
+                    PriorityQueueItem(
+                        node=NodeWithTime.from_node(neighbor_node, next_time_step),
+                        f_score=node_f_score,
+                    )
                 )
         else:
-            raise RuntimeError("Path was not found")
-    return agent_path
+            raise RuntimeError(
+                f"Path was not found. {agents_paths=}. {reservation_table=}"
+            )
+    return agents_paths
 
 
 def main():

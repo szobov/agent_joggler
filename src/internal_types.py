@@ -6,6 +6,7 @@ NodePosition: _t.TypeAlias = int
 NodeState = enum.Enum("NodeState", "FREE RESERVED BLOCKED")
 GridtT: _t.TypeAlias = list[list[NodeState]]
 TimeT: _t.TypeAlias = int
+AgentIdT: _t.TypeAlias = int
 
 
 @dataclasses.dataclass(frozen=True, order=True)
@@ -14,14 +15,23 @@ class Node:
     position_y: NodePosition
 
 
-@dataclasses.dataclass(frozen=True)
-class NodeWithState(Node):
-    state: NodeState
+@dataclasses.dataclass(frozen=True, order=True)
+class NodeWithTime(Node):
+    time_step: TimeT
+
+    @classmethod
+    def from_node(
+        cls: _t.Type["NodeWithTime"], node: Node, time_step: TimeT
+    ) -> "NodeWithTime":
+        return cls(node.position_x, node.position_y, time_step)
+
+    def to_node(self) -> Node:
+        return Node(self.position_x, self.position_y)
 
 
 @dataclasses.dataclass(frozen=True)
 class Agent:
-    agent_id: int
+    agent_id: AgentIdT
     position: Node
     goal: Node
 
@@ -34,8 +44,8 @@ class Environment:
     agents: list[Agent]
 
 
-ReservationTableKeyT: _t.TypeAlias = tuple[NodePosition, NodePosition, TimeT]
-ReservationTableT: _t.TypeAlias = dict[ReservationTableKeyT, NodeState]
+ReservationTableKeyT: _t.TypeAlias = tuple[Node, Node, TimeT]
+ReservationTableT: _t.TypeAlias = dict[ReservationTableKeyT, Agent]
 
 
 @enum.unique
@@ -47,4 +57,4 @@ class Heuristic(enum.Enum):
 @dataclasses.dataclass(frozen=True, order=True)
 class PriorityQueueItem:
     f_score: float
-    node: Node
+    node: NodeWithTime
