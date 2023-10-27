@@ -53,5 +53,6 @@ def build_cross_env() -> Environment:
             key=lambda node: -heuristic(Heuristic.TRUE_DISTANCE, agent_pos, node),
         )[0]
         agent = Agent(agent_id=agen_id, position=agent_pos, goal=goal_pos)
+        goal_poses.remove(goal_pos)
         set_agent(env, agent)
     return env
