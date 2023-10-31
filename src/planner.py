@@ -147,6 +147,25 @@ def time_expand_path(path: _t.Sequence[NodeWithTime]) -> _t.Sequence[Node]:
     return expanded_path
 
 
+def _need_wait(
+    time_step: TimeT,
+    reservation_table: ReservationTableT,
+    curr_node: Node,
+    next_node: Node,
+) -> bool:
+    is_next_node_occupied = (
+        next_node,
+        next_node,
+        time_step,
+    ) in reservation_table
+    is_edge_occpuied = (
+        curr_node,
+        next_node,
+        time_step,
+    ) in reservation_table
+    return is_edge_occpuied or is_next_node_occupied
+
+
 def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
     agents_paths: dict[Agent, _t.Sequence[Node]] = {}
     reservation_table = make_reservation_table()
@@ -187,21 +206,13 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
             for neighbor_node in get_neighbors(env, current_node):
                 next_time_step = current_node.time_step + 1
 
-                def _need_wait(time_step: TimeT, curr_node: Node, next_node: Node):
-                    is_next_node_occupied = (
-                        next_node,
-                        next_node,
-                        time_step,
-                    ) in reservation_table
-                    is_edge_occpuied = (
-                        curr_node,
-                        next_node,
-                        time_step,
-                    ) in reservation_table
-                    return is_edge_occpuied or is_next_node_occupied
-
                 is_current_node_reserved = False
-                while _need_wait(next_time_step, current_node.to_node(), neighbor_node):
+                while _need_wait(
+                    next_time_step,
+                    reservation_table,
+                    current_node.to_node(),
+                    neighbor_node,
+                ):
                     if (
                         current_node.to_node(),
                         current_node.to_node(),
@@ -216,29 +227,29 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
                 # d(current,neighbor) is the weight of the edge from
                 # current to neighbor tentative_g_score is the distance
                 # from start to the neighbor through current
-                tentative_g_score = (
-                    g_score[current_node_with_priority.node.to_node()]
-                    + edge_cost(env, current_node_with_priority.node, neighbor_node)
-                    + wait_time
-                )
+                tentative_g_score = g_score[
+                    current_node_with_priority.node.to_node()
+                ] + edge_cost(env, current_node_with_priority.node, neighbor_node)
+                tentative_g_score_plus_wait_time = tentative_g_score + wait_time
 
-                # TODO: figure out how to deal with time table
-                # it seems like I need to add time_step in open_set?
-                # Or is it enough by checking reservation table in get_neighbours and
-                # mark the path as reserved only in reconstruct path?
-                #
-
-                if tentative_g_score >= g_score.get(neighbor_node, float("inf")):
+                if tentative_g_score_plus_wait_time >= g_score.get(
+                    neighbor_node, float("inf")
+                ):
                     continue
                 came_from[
                     NodeWithTime.from_node(neighbor_node, next_time_step)
                 ] = current_node
-                g_score[neighbor_node] = tentative_g_score
+                g_score[neighbor_node] = tentative_g_score_plus_wait_time
                 node_f_score = tentative_g_score + heuristic(
                     Heuristic.MANHATTAN_DISTANCE, neighbor_node, agent.goal
                 )
                 f_score[neighbor_node] = node_f_score
-
+                # TODO: backward search:
+                # 1. I need to run A* on a map without reservation table and other
+                #    agents.
+                # 2. It should use Manhattan distance as a heuristic.
+                # 3. Should I use agent-wide g_score, f_score and came_from structures?
+                # 4. Is came_from == closed_list in the paper?
                 open_set.add(
                     PriorityQueueItem(
                         node=NodeWithTime.from_node(neighbor_node, next_time_step),
