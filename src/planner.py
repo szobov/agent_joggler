@@ -22,12 +22,8 @@ def heuristic(heuristic_type: Heuristic, left: Node, right: Node) -> float:
             dx = abs(left.position_x - right.position_x)
             dy = abs(left.position_y - right.position_y)
             return dx + dy
-        case Heuristic.TRUE_DISTANCE:
-            dx = left.position_x - right.position_x
-            dy = left.position_y - right.position_y
-            return round(math.sqrt(dx * dx + dy * dy), ndigits=5)
         case _:
-            return 0.0
+            raise NotImplementedError(f"{heuristic_type=}")
 
 
 def make_reservation_table() -> ReservationTableT:
@@ -166,10 +162,11 @@ def _need_wait(
     return is_edge_occpuied or is_next_node_occupied
 
 
-def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
+def space_time_a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
     agents_paths: dict[Agent, _t.Sequence[Node]] = {}
     reservation_table = make_reservation_table()
     for agent in env.agents:
+        rra = initialize_reverse_resumable_a_star(env, agent.goal, agent.position)
         time_step: TimeT = 0
         open_set = OpenSet()
         came_from: dict[NodeWithTime, NodeWithTime] = dict()
@@ -184,9 +181,7 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
         #
         # TODO: should time_step be counted as heuristic?
         f_score = dict()
-        f_score[agent.position] = heuristic(
-            Heuristic.MANHATTAN_DISTANCE, agent.position, agent.goal
-        )
+        f_score[agent.position] = resume_rra(rra, agent.position)
 
         open_set.add(
             PriorityQueueItem(
@@ -198,7 +193,8 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
         while len(open_set):
             current_node_with_priority = open_set.pop()
             current_node = current_node_with_priority.node
-            if current_node_with_priority.node.to_node() == agent.goal:
+            assert type(current_node) is NodeWithTime
+            if current_node.to_node() == agent.goal:
                 path = reconstruct_path(came_from, current_node)
                 follow_path(path, reservation_table, agent)
                 agents_paths[agent] = time_expand_path(path)
@@ -227,9 +223,9 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
                 # d(current,neighbor) is the weight of the edge from
                 # current to neighbor tentative_g_score is the distance
                 # from start to the neighbor through current
-                tentative_g_score = g_score[
-                    current_node_with_priority.node.to_node()
-                ] + edge_cost(env, current_node_with_priority.node, neighbor_node)
+                tentative_g_score = g_score[current_node.to_node()] + edge_cost(
+                    env, current_node, neighbor_node
+                )
                 tentative_g_score_plus_wait_time = tentative_g_score + wait_time
 
                 if tentative_g_score_plus_wait_time >= g_score.get(
@@ -240,16 +236,8 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
                     NodeWithTime.from_node(neighbor_node, next_time_step)
                 ] = current_node
                 g_score[neighbor_node] = tentative_g_score_plus_wait_time
-                node_f_score = tentative_g_score + heuristic(
-                    Heuristic.MANHATTAN_DISTANCE, neighbor_node, agent.goal
-                )
+                node_f_score = tentative_g_score + resume_rra(rra, neighbor_node)
                 f_score[neighbor_node] = node_f_score
-                # TODO: backward search:
-                # 1. I need to run A* on a map without reservation table and other
-                #    agents.
-                # 2. It should use Manhattan distance as a heuristic.
-                # 3. Should I use agent-wide g_score, f_score and came_from structures?
-                # 4. Is came_from == closed_list in the paper?
                 open_set.add(
                     PriorityQueueItem(
                         node=NodeWithTime.from_node(neighbor_node, next_time_step),
@@ -261,6 +249,88 @@ def a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
                 f"Path was not found. {agents_paths=}. {reservation_table=}"
             )
     return agents_paths
+
+
+def initialize_reverse_resumable_a_star(
+    env: Environment, initial_node: Node, goal_node: Node
+) -> _t.Generator[float, Node, None]:
+    open_set = OpenSet()
+    # For node n, gScore[n] is the cost of the cheapest path
+    # from start to n currently known.
+    g_score = dict()
+    g_score[initial_node] = 0
+
+    # For node n, fScore[n] := gScore[n] + h(n).
+    # fScore[n] represents our current best guess as to
+    # how short a path from start to finish can be if it goes through n.
+    f_score = dict()
+    f_score[initial_node] = heuristic(
+        Heuristic.MANHATTAN_DISTANCE, initial_node, goal_node
+    )
+
+    open_set.add(
+        PriorityQueueItem(
+            f_score[initial_node],
+            initial_node,
+        )
+    )
+    return resume_reverse_a_star(env, open_set, g_score, f_score)
+
+
+def resume_reverse_a_star(
+    env: Environment,
+    open_set: OpenSet,
+    g_score: dict[Node, float],
+    f_score: dict[Node, float],
+) -> _t.Generator[float, Node, None]:
+    closed_set: set[Node] = set()
+    while True:
+        search_node: Node = yield
+        assert isinstance(search_node, Node)
+
+        if search_node in closed_set:
+            yield g_score[search_node]
+            continue
+
+        while len(open_set):
+            current_node_with_priority = open_set.pop()
+            current_node = current_node_with_priority.node
+            closed_set.add(current_node)
+            if current_node == search_node:
+                yield g_score[current_node]
+                break
+            for neighbor_node in get_neighbors(env, current_node):
+                # d(current,neighbor) is the weight of the edge from
+                # current to neighbor tentative_g_score is the distance
+                # from start to the neighbor through current
+                tentative_g_score = g_score[current_node] + edge_cost(
+                    env, current_node, neighbor_node
+                )
+
+                if tentative_g_score >= g_score.get(neighbor_node, float("inf")):
+                    continue
+                g_score[neighbor_node] = tentative_g_score
+                node_f_score = tentative_g_score + heuristic(
+                    Heuristic.MANHATTAN_DISTANCE, neighbor_node, search_node
+                )
+                f_score[neighbor_node] = node_f_score
+                # TODO: backward search:
+                # 3. Should I use agent-wide g_score, f_score and came_from structures?
+                open_set.add(
+                    PriorityQueueItem(
+                        node=neighbor_node,
+                        f_score=node_f_score,
+                    )
+                )
+        else:
+            yield float("inf")
+
+
+def resume_rra(rra: _t.Generator[float, Node, None], node: Node) -> float:
+    next(rra)
+    g_score = rra.send(node)
+    assert g_score is not None
+    return g_score
 
 
 def main():

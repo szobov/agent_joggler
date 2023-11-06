@@ -51,10 +51,9 @@ ReservationTableT: _t.TypeAlias = dict[ReservationTableKeyT, Agent]
 @enum.unique
 class Heuristic(enum.Enum):
     MANHATTAN_DISTANCE = enum.auto()
-    TRUE_DISTANCE = enum.auto()
 
 
 @dataclasses.dataclass(frozen=True, order=True)
 class PriorityQueueItem:
     f_score: float
-    node: NodeWithTime
+    node: NodeWithTime | Node
