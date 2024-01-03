@@ -1,33 +1,36 @@
-import math
 import dataclasses
-import heapq
 import typing as _t
+
+import structlog
+
+from .utils import is_debug
 
 from .internal_types import (
     Agent,
     Environment,
-    Heuristic,
     Node,
     NodeWithTime,
     TimeT,
-    NodeState,
-    ReservationTableT,
+    ReservationTable,
     PriorityQueueItem,
 )
 
+from .common_a_star_utils import (
+    get_neighbors,
+    edge_cost,
+    OpenSet,
+)
 
-def heuristic(heuristic_type: Heuristic, left: Node, right: Node) -> float:
-    match heuristic_type:
-        case Heuristic.MANHATTAN_DISTANCE:
-            dx = abs(left.position_x - right.position_x)
-            dy = abs(left.position_y - right.position_y)
-            return dx + dy
-        case _:
-            raise NotImplementedError(f"{heuristic_type=}")
+from .reverse_resumable_a_star import (
+    initialize_reverse_resumable_a_star,
+    resume_rra,
+)
+
+logger = structlog.getLogger(__name__)
 
 
-def make_reservation_table() -> ReservationTableT:
-    return {}
+def make_reservation_table(agents: _t.Sequence[Agent]) -> ReservationTable:
+    return ReservationTable(agents=agents)
 
 
 # https://en.wikipedia.org/wiki/A*_search_algorithm
@@ -41,61 +44,8 @@ def reconstruct_path(
     return list(reversed(total_path))
 
 
-def get_neighbors(env: Environment, node: Node) -> _t.Iterator[Node]:
-    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        neighbor_position_x = node.position_x + dx
-        if neighbor_position_x >= env.x_dim or neighbor_position_x < 0:
-            continue
-        neighbor_position_y = node.position_y + dy
-        if neighbor_position_y >= env.y_dim or neighbor_position_y < 0:
-            continue
-        state = env.grid[neighbor_position_x][neighbor_position_y]
-        if state == NodeState.BLOCKED:
-            continue
-        if state == NodeState.RESERVED:
-            ...
-        yield Node(neighbor_position_x, neighbor_position_y)
-
-
-def edge_cost(env: Environment, node_from: Node, node_to: Node) -> float:
-    del env, node_from, node_to
-    return 1.0
-
-
-@dataclasses.dataclass
-class OpenSet:
-    item_queue: list[PriorityQueueItem] = dataclasses.field(default_factory=list)
-    item_set: set[Node] = dataclasses.field(default_factory=set)
-
-    def add(self, item: PriorityQueueItem) -> None:
-        if item.node in self.item_set:
-            return
-        heapq.heappush(self.item_queue, item)
-        self.item_set.add(item.node)
-
-    def pop(self) -> PriorityQueueItem:
-        item = heapq.heappop(self.item_queue)
-        self.item_set.remove(item.node)
-        return item
-
-    def __len__(self) -> int:
-        return len(self.item_queue)
-
-
-def reserve_nodes(
-    reservation_table: ReservationTableT,
-    agent: Agent,
-    node_from: NodeWithTime,
-    node_to: NodeWithTime,
-    time_step: TimeT,
-) -> None:
-    key = (node_from.to_node(), node_to.to_node(), time_step)
-    assert key not in reservation_table, f"{key=}, {reservation_table=}, {agent=}"
-    reservation_table[key] = agent
-
-
 def follow_path(
-    path: _t.Sequence[NodeWithTime], reservation_table: ReservationTableT, agent: Agent
+    path: _t.Sequence[NodeWithTime], reservation_table: ReservationTable, agent: Agent
 ):
     for prev_node, next_node in zip(path, path[1:]):
         assert (
@@ -103,35 +53,15 @@ def follow_path(
         ), f"{prev_node.time_step} != {next_node.time_step}"
 
         for wait_time_step in range(prev_node.time_step, next_node.time_step):
-            reserve_nodes(
-                reservation_table,
-                agent,
-                prev_node,
-                prev_node,
-                wait_time_step,
+            reservation_table.reserve_node(prev_node, wait_time_step, agent)
+        if prev_node.to_node() == next_node.to_node():
+            reservation_table.reserve_node(prev_node, next_node.time_step, agent)
+        else:
+            reservation_table.reserve_edge(
+                prev_node, next_node, next_node.time_step, agent
             )
-        reserve_nodes(
-            reservation_table,
-            agent,
-            prev_node,
-            next_node,
-            next_node.time_step,
-        )
-        reserve_nodes(
-            reservation_table,
-            agent,
-            next_node,
-            prev_node,
-            next_node.time_step,
-        )
     last_node = path[-1]
-    reserve_nodes(
-        reservation_table,
-        agent,
-        last_node,
-        last_node,
-        last_node.time_step,
-    )
+    reservation_table.reserve_node(last_node, last_node.time_step, agent)
 
 
 def time_expand_path(path: _t.Sequence[NodeWithTime]) -> _t.Sequence[Node]:
@@ -145,197 +75,223 @@ def time_expand_path(path: _t.Sequence[NodeWithTime]) -> _t.Sequence[Node]:
 
 def _need_wait(
     time_step: TimeT,
-    reservation_table: ReservationTableT,
+    reservation_table: ReservationTable,
     curr_node: Node,
     next_node: Node,
 ) -> bool:
-    is_next_node_occupied = (
-        next_node,
+    is_next_node_occupied = reservation_table.is_node_occupied(
         next_node,
         time_step,
-    ) in reservation_table
-    is_edge_occpuied = (
+    )
+    is_edge_occpuied = reservation_table.is_edge_occupied(
         curr_node,
         next_node,
         time_step,
-    ) in reservation_table
+    )
     return is_edge_occpuied or is_next_node_occupied
 
 
-def space_time_a_star_search(env: Environment) -> dict[Agent, _t.Sequence[Node]]:
-    agents_paths: dict[Agent, _t.Sequence[Node]] = {}
-    reservation_table = make_reservation_table()
-    for agent in env.agents:
-        rra = initialize_reverse_resumable_a_star(env, agent.goal, agent.position)
-        time_step: TimeT = 0
-        open_set = OpenSet()
-        came_from: dict[NodeWithTime, NodeWithTime] = dict()
-        # For node n, gScore[n] is the cost of the cheapest path
-        # from start to n currently known.
-        g_score = dict()
-        g_score[agent.position] = 0
-
-        # For node n, fScore[n] := gScore[n] + h(n).
-        # fScore[n] represents our current best guess as to
-        # how short a path from start to finish can be if it goes through n.
-        #
-        # TODO: should time_step be counted as heuristic?
-        f_score = dict()
-        f_score[agent.position] = resume_rra(rra, agent.position)
-
-        open_set.add(
-            PriorityQueueItem(
-                f_score[agent.position],
-                NodeWithTime.from_node(agent.position, time_step),
-            )
-        )
-
-        while len(open_set):
-            current_node_with_priority = open_set.pop()
-            current_node = current_node_with_priority.node
-            assert type(current_node) is NodeWithTime
-            if current_node.to_node() == agent.goal:
-                path = reconstruct_path(came_from, current_node)
-                follow_path(path, reservation_table, agent)
-                agents_paths[agent] = time_expand_path(path)
-                break
-            for neighbor_node in get_neighbors(env, current_node):
-                next_time_step = current_node.time_step + 1
-
-                is_current_node_reserved = False
-                while _need_wait(
-                    next_time_step,
-                    reservation_table,
-                    current_node.to_node(),
-                    neighbor_node,
-                ):
-                    if (
-                        current_node.to_node(),
-                        current_node.to_node(),
-                        next_time_step,
-                    ) in reservation_table:
-                        is_current_node_reserved = True
-                        break
-                    next_time_step += 1
-                if is_current_node_reserved:
-                    continue
-                wait_time = next_time_step - current_node.time_step
-                # d(current,neighbor) is the weight of the edge from
-                # current to neighbor tentative_g_score is the distance
-                # from start to the neighbor through current
-                tentative_g_score = g_score[current_node.to_node()] + edge_cost(
-                    env, current_node, neighbor_node
-                )
-                tentative_g_score_plus_wait_time = tentative_g_score + wait_time
-
-                if tentative_g_score_plus_wait_time >= g_score.get(
-                    neighbor_node, float("inf")
-                ):
-                    continue
-                came_from[
-                    NodeWithTime.from_node(neighbor_node, next_time_step)
-                ] = current_node
-                g_score[neighbor_node] = tentative_g_score_plus_wait_time
-                node_f_score = tentative_g_score + resume_rra(rra, neighbor_node)
-                f_score[neighbor_node] = node_f_score
-                open_set.add(
-                    PriorityQueueItem(
-                        node=NodeWithTime.from_node(neighbor_node, next_time_step),
-                        f_score=node_f_score,
-                    )
-                )
-        else:
-            raise RuntimeError(
-                f"Path was not found. {agents_paths=}. {reservation_table=}"
-            )
-    return agents_paths
-
-
-def initialize_reverse_resumable_a_star(
-    env: Environment, initial_node: Node, goal_node: Node
-) -> _t.Generator[float, Node, None]:
-    open_set = OpenSet()
-    # For node n, gScore[n] is the cost of the cheapest path
-    # from start to n currently known.
-    g_score = dict()
-    g_score[initial_node] = 0
-
-    # For node n, fScore[n] := gScore[n] + h(n).
-    # fScore[n] represents our current best guess as to
-    # how short a path from start to finish can be if it goes through n.
-    f_score = dict()
-    f_score[initial_node] = heuristic(
-        Heuristic.MANHATTAN_DISTANCE, initial_node, goal_node
+def windowed_hierarhical_cooperative_a_start(
+    env: Environment,
+) -> dict[Agent, _t.Sequence[Node]]:
+    agents_paths: _t.DefaultDict[Agent, _t.Sequence[NodeWithTime]] = _t.DefaultDict(
+        list
     )
+    reservation_table = make_reservation_table(env.agents)
+    # TODO: partial paths:
+    # 4. What means: This can be achieved by interleaving the searches, so that roughly 2n/d units replan at the same time?
+    TIME_WINDOW = 8
+    agent_to_space_time_a_star_search: dict[
+        Agent, _t.Generator[_t.Sequence[NodeWithTime], None, None]
+    ] = {}
+    while not all_agent_reached_destination(agents_paths, env):
+        try:
+            for agent in env.agents:
+                if agent in agent_to_space_time_a_star_search:
+                    stas_search = agent_to_space_time_a_star_search[agent]
+                else:
+                    stas_search = space_time_a_star_search(
+                        env=env,
+                        reservation_table=reservation_table,
+                        agent=agent,
+                        time_window=TIME_WINDOW,
+                    )
+                    agent_to_space_time_a_star_search[agent] = stas_search
+                new_partial_path = list(next(stas_search))
+                logger.info(
+                    "joining new path", new_partial_path=new_partial_path, agent=agent
+                )
+                previous_partial_path = agents_paths[agent]
+                if len(previous_partial_path) and (
+                    previous_partial_path[-1] == new_partial_path[0]
+                ):
+                    new_partial_path = new_partial_path[1:]
+                agents_paths[agent] = list(previous_partial_path) + new_partial_path
+        except Exception:
+            if is_debug() and len(agents_paths):
+                return {
+                    agent: time_expand_path(path)
+                    for agent, path in agents_paths.items()
+                }
+            else:
+                raise
+    logger.info("all agents reached destination")
+    return {agent: time_expand_path(path) for agent, path in agents_paths.items()}
+
+
+def all_agent_reached_destination(
+    agent_paths: dict[Agent, _t.Sequence[NodeWithTime]], env: Environment
+) -> bool:
+    num_of_agents = len(env.agents)
+    number_of_reached = sum(
+        1
+        for _ in filter(
+            lambda item: item[0].goal == item[1][-1].to_node(), agent_paths.items()
+        )
+    )
+    return num_of_agents == number_of_reached
+
+
+def space_time_a_star_search(
+    env: Environment,
+    reservation_table: ReservationTable,
+    agent: Agent,
+    time_window: int,
+) -> _t.Generator[_t.Sequence[NodeWithTime], None, None]:
+    rra = initialize_reverse_resumable_a_star(env, agent.goal, agent.position)
+    time_step: TimeT = 0
+    open_set = OpenSet()
+
+    g_score: dict[Node, float] = dict()
+    g_score[agent.position] = 0
+
+    f_score = dict()
+    f_score[agent.position] = resume_rra(rra, agent.position)
 
     open_set.add(
         PriorityQueueItem(
-            f_score[initial_node],
-            initial_node,
+            f_score[agent.position],
+            NodeWithTime.from_node(agent.position, time_step),
         )
     )
-    return resume_reverse_a_star(env, open_set, g_score, f_score)
+    return continue_space_time_a_star_search(
+        env=env,
+        time_window=time_window,
+        reservation_table=reservation_table,
+        open_set=open_set,
+        f_score=f_score,
+        g_score=g_score,
+        rra=rra,
+        agent=agent,
+    )
 
 
-def resume_reverse_a_star(
+def continue_space_time_a_star_search(
     env: Environment,
+    time_window: int,
+    reservation_table: ReservationTable,
     open_set: OpenSet,
     g_score: dict[Node, float],
     f_score: dict[Node, float],
-) -> _t.Generator[float, Node, None]:
-    closed_set: set[Node] = set()
-    while True:
-        search_node: Node = yield
-        assert isinstance(search_node, Node)
+    rra: _t.Generator[float, Node, None],
+    agent: Agent,
+) -> _t.Generator[_t.Sequence[NodeWithTime], None, None]:
+    came_from: dict[NodeWithTime, NodeWithTime] = dict()
+    terminal_node = agent.goal
+    log = logger.bind(agent=agent)
 
-        if search_node in closed_set:
-            yield g_score[search_node]
+    start_interval_time_step = 0
+
+    reservation_table.free_initialy_reserved_node(agent.position)
+    while True:
+        # XXX: Current problem: node is initially reserved and then ignored during the search.
+        # possible solutions:
+        current_node_with_priority = open_set.pop()
+        current_node = current_node_with_priority.node
+        log = log.bind(current_node=current_node)
+        assert type(current_node) is NodeWithTime
+        if (
+            current_node.time_step % time_window == 0
+        ) and current_node.time_step != start_interval_time_step:
+            path = reconstruct_path(came_from, current_node)
+            log.info("time window is over", path=path)
+            follow_path(path, reservation_table, agent)
+            yield path
+            h_score = resume_rra(rra, current_node)
+            open_set = OpenSet()
+
+            open_set.add(
+                dataclasses.replace(current_node_with_priority, f_score=h_score)
+            )
+            start_interval_time_step = current_node.time_step
             continue
 
-        while len(open_set):
-            current_node_with_priority = open_set.pop()
-            current_node = current_node_with_priority.node
-            closed_set.add(current_node)
-            if current_node == search_node:
-                yield g_score[current_node]
-                break
-            for neighbor_node in get_neighbors(env, current_node):
-                # d(current,neighbor) is the weight of the edge from
-                # current to neighbor tentative_g_score is the distance
-                # from start to the neighbor through current
-                tentative_g_score = g_score[current_node] + edge_cost(
-                    env, current_node, neighbor_node
+        if current_node.to_node() == terminal_node:
+            log.info("arrived to terminal node")
+            next_time_step = current_node.time_step + 1
+            while (
+                next_time_step % time_window != 0
+            ) and not reservation_table.is_node_occupied(current_node, next_time_step):
+                next_time_step += 1
+            if next_time_step != current_node.time_step + 1:
+                new_current_node = dataclasses.replace(
+                    current_node, time_step=next_time_step
                 )
-
-                if tentative_g_score >= g_score.get(neighbor_node, float("inf")):
-                    continue
-                g_score[neighbor_node] = tentative_g_score
-                node_f_score = tentative_g_score + heuristic(
-                    Heuristic.MANHATTAN_DISTANCE, neighbor_node, search_node
-                )
-                f_score[neighbor_node] = node_f_score
-                # TODO: backward search:
-                # 3. Should I use agent-wide g_score, f_score and came_from structures?
+                came_from[new_current_node] = current_node
                 open_set.add(
-                    PriorityQueueItem(
-                        node=neighbor_node,
-                        f_score=node_f_score,
+                    dataclasses.replace(
+                        current_node_with_priority, node=new_current_node
                     )
                 )
-        else:
-            yield float("inf")
+                continue
+        for neighbor_node in get_neighbors(env, current_node):
+            log = log.bind(neighbor_node=neighbor_node)
+            if reservation_table.is_node_initially_reserved(neighbor_node):
+                log.info("neighbor_node is initially reserved")
+                continue
+            next_time_step = current_node.time_step + 1
 
+            is_current_node_reserved = False
+            while _need_wait(
+                next_time_step,
+                reservation_table,
+                current_node,
+                neighbor_node,
+            ):
+                if reservation_table.is_node_occupied(
+                    current_node,
+                    next_time_step,
+                ):
+                    logger.info("current node is occupied")
+                    is_current_node_reserved = True
+                    break
+                next_time_step += 1
 
-def resume_rra(rra: _t.Generator[float, Node, None], node: Node) -> float:
-    next(rra)
-    g_score = rra.send(node)
-    assert g_score is not None
-    return g_score
+            if is_current_node_reserved:
+                log.info("current_node is reserved. Abandoning this branch...")
+                continue
+            wait_time = next_time_step - current_node.time_step - 1
+            tentative_g_score = g_score[current_node.to_node()] + edge_cost(
+                env, current_node, neighbor_node
+            )
+            tentative_g_score_plus_wait_time = tentative_g_score + wait_time
 
-
-def main():
-    ...
-
-
-if __name__ == "__main__":
-    main()
+            came_from[
+                NodeWithTime.from_node(neighbor_node, next_time_step)
+            ] = current_node
+            g_score[neighbor_node] = tentative_g_score_plus_wait_time
+            node_h_score = resume_rra(rra, neighbor_node)
+            node_f_score = node_h_score + tentative_g_score_plus_wait_time
+            f_score[neighbor_node] = node_f_score
+            log.info(
+                "adding new node to open_set",
+                open_set=open_set.item_queue,
+                node_f_score=node_f_score,
+            )
+            open_set.upsert(
+                PriorityQueueItem(
+                    node=NodeWithTime.from_node(neighbor_node, next_time_step),
+                    f_score=node_f_score,
+                )
+            )
+        log = log.try_unbind("neighbor_node")

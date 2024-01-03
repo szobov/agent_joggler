@@ -1,2 +1,5 @@
 numpy
 arcade
+rich
+structlog
+colorama

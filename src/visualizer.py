@@ -1,14 +1,11 @@
 import arcade
 import math
 
+import structlog
+
 from .internal_types import Environment, NodeState
 
-# Draw a grid of circles with dimentions (x_dim, y_dim)
-# Color "agent" circles.
-# Color "goal" circles.
-# Draw a line, representing a path
-# If head-on or meet collision is happening, draw a red circle around the agent
-# and stop execution.
+logger = structlog.getLogger(__name__)
 
 
 class EnvironmentVisualizer(arcade.Window):
@@ -55,8 +52,9 @@ class EnvironmentVisualizer(arcade.Window):
                 arcade.color.RED,
             )
 
-        for _, path in self.agent_paths.items():
-            agent_color = arcade.color.GREEN
+        for agent, path in self.agent_paths.items():
+            agent_color = (255, 255 // (agent.agent_id + 1), 0)
+            logger.debug("draw agent", agent=agent, agent_color=agent_color)
             if self.current_step < len(path):
                 dt, step = math.modf(self.current_step)
                 step = int(step)

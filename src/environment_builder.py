@@ -1,12 +1,11 @@
 from .internal_types import Agent, Environment, NodeState, Node, Heuristic
-from .planner import heuristic
+from .common_a_star_utils import heuristic
 
 
 def set_agent(env: Environment, agent: Agent):
     pos_x = agent.position.position_x
     pos_y = agent.position.position_y
     assert env.grid[pos_x][pos_y] == NodeState.FREE
-    env.grid[pos_x][pos_y] = NodeState.RESERVED
     env.agents.append(agent)
 
 
@@ -50,7 +49,7 @@ def build_cross_env() -> Environment:
     for agen_id, agent_pos in enumerate(agent_poses):
         goal_pos = sorted(
             goal_poses,
-            key=lambda node: -heuristic(Heuristic.TRUE_DISTANCE, agent_pos, node),
+            key=lambda node: -heuristic(Heuristic.EUCLIDEAN_DISTANCE, agent_pos, node),
         )[0]
         agent = Agent(agent_id=agen_id, position=agent_pos, goal=goal_pos)
         goal_poses.remove(goal_pos)
