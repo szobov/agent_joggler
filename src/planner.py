@@ -206,6 +206,16 @@ def continue_space_time_a_star_search(
     while True:
         # XXX: Current problem: node is initially reserved and then ignored during the search.
         # possible solutions:
+        # TODO: check if it would be possible to stay on the node instead of going.
+        #       probably, it should be possible and may solve an issue of agents moving back and forth
+        #       untile path is free.
+        # TODO: add more test environments.
+        #       A good question if I should add them as tests or just a different envs in environment_builder
+        # TODO: try running visualization with arcade-web.
+        # TODO: research a generative approach on creating different environments
+        # TODO: make planner run in parallel thread/process and assign tasks randomly and add agents.
+        #       It should highlight the problem of scaling. I should clean-up obsolete reservation table
+        #       at this point.
         current_node_with_priority = open_set.pop()
         current_node = current_node_with_priority.node
         log = log.bind(current_node=current_node)
