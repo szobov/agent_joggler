@@ -1,5 +1,6 @@
 import dataclasses
 import typing as _t
+import random
 
 import structlog
 
@@ -106,7 +107,7 @@ def windowed_hierarhical_cooperative_a_start(
     ] = {}
     while not all_agent_reached_destination(agents_paths, env):
         try:
-            for agent in env.agents:
+            for agent in random.sample(env.agents, k=len(env.agents)):
                 if agent in agent_to_space_time_a_star_search:
                     stas_search = agent_to_space_time_a_star_search[agent]
                 else:
