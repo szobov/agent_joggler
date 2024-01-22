@@ -277,13 +277,13 @@ def continue_space_time_a_star_search(
                     current_node,
                     next_time_step,
                 ):
-                    logger.info("current node is occupied")
+                    logger.debug("current node is occupied")
                     is_current_node_reserved = True
                     break
                 next_time_step += 1
 
             if is_current_node_reserved:
-                log.info("current_node is reserved. Abandoning this branch...")
+                log.debug("current_node is reserved. Abandoning this branch...")
                 continue
             wait_time = next_time_step - current_node.time_step - 1
             tentative_g_score = g_score[current_node.to_node()] + edge_cost(
@@ -298,7 +298,7 @@ def continue_space_time_a_star_search(
             node_h_score = resume_rra(rra, neighbor_node)
             node_f_score = node_h_score + tentative_g_score_plus_wait_time
             f_score[neighbor_node] = node_f_score
-            log.info(
+            log.debug(
                 "adding new node to open_set",
                 open_set=open_set.item_queue,
                 node_f_score=node_f_score,
