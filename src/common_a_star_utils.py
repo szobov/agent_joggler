@@ -28,7 +28,7 @@ def heuristic(heuristic_type: Heuristic, left: Node, right: Node) -> float:
 
 
 def get_neighbors(env: Environment, node: Node) -> _t.Iterator[Node]:
-    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (0, 0)):
         neighbor_position_x = node.position_x + dx
         if neighbor_position_x >= env.x_dim or neighbor_position_x < 0:
             continue

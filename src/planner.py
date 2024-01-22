@@ -29,9 +29,11 @@ from .reverse_resumable_a_star import (
 
 logger = structlog.getLogger(__name__)
 
+random.seed(42)
 
-def make_reservation_table(agents: _t.Sequence[Agent]) -> ReservationTable:
-    return ReservationTable(agents=agents)
+
+def make_reservation_table() -> ReservationTable:
+    return ReservationTable()
 
 
 # https://en.wikipedia.org/wiki/A*_search_algorithm
@@ -95,18 +97,14 @@ def _need_wait(
 def windowed_hierarhical_cooperative_a_start(
     env: Environment,
 ) -> dict[Agent, _t.Sequence[Node]]:
-    agents_paths: _t.DefaultDict[Agent, _t.Sequence[NodeWithTime]] = _t.DefaultDict(
-        list
-    )
-    reservation_table = make_reservation_table(env.agents)
-    # TODO: partial paths:
-    # 4. What means: This can be achieved by interleaving the searches, so that roughly 2n/d units replan at the same time?
+    reservation_table = make_reservation_table()
     TIME_WINDOW = 8
     agent_to_space_time_a_star_search: dict[
         Agent, _t.Generator[_t.Sequence[NodeWithTime], None, None]
     ] = {}
-    while not all_agent_reached_destination(agents_paths, env):
+    while not all_agent_reached_destination(reservation_table.agents_paths, env):
         try:
+            # TODO: make interleaved searches
             for agent in random.sample(env.agents, k=len(env.agents)):
                 if agent in agent_to_space_time_a_star_search:
                     stas_search = agent_to_space_time_a_star_search[agent]
@@ -122,22 +120,27 @@ def windowed_hierarhical_cooperative_a_start(
                 logger.info(
                     "joining new path", new_partial_path=new_partial_path, agent=agent
                 )
-                previous_partial_path = agents_paths[agent]
+                previous_partial_path = reservation_table.agents_paths[agent]
                 if len(previous_partial_path) and (
                     previous_partial_path[-1] == new_partial_path[0]
                 ):
                     new_partial_path = new_partial_path[1:]
-                agents_paths[agent] = list(previous_partial_path) + new_partial_path
+                reservation_table.agents_paths[agent] = (
+                    list(previous_partial_path) + new_partial_path
+                )
         except Exception:
-            if is_debug() and len(agents_paths):
+            if is_debug() and len(reservation_table.agents_paths):
                 return {
                     agent: time_expand_path(path)
-                    for agent, path in agents_paths.items()
+                    for agent, path in reservation_table.agents_paths.items()
                 }
             else:
                 raise
     logger.info("all agents reached destination")
-    return {agent: time_expand_path(path) for agent, path in agents_paths.items()}
+    return {
+        agent: time_expand_path(path)
+        for agent, path in reservation_table.agents_paths.items()
+    }
 
 
 def all_agent_reached_destination(
@@ -203,7 +206,6 @@ def continue_space_time_a_star_search(
 
     start_interval_time_step = 0
 
-    reservation_table.free_initialy_reserved_node(agent.position)
     while True:
         # XXX: Current problem: node is initially reserved and then ignored during the search.
         # possible solutions:
@@ -228,11 +230,15 @@ def continue_space_time_a_star_search(
             log.info("time window is over", path=path)
             follow_path(path, reservation_table, agent)
             yield path
+            current_node = reservation_table.agents_paths[agent][-1]
             h_score = resume_rra(rra, current_node)
             open_set = OpenSet()
 
             open_set.add(
-                dataclasses.replace(current_node_with_priority, f_score=h_score)
+                dataclasses.replace(
+                    dataclasses.replace(current_node_with_priority, node=current_node),
+                    f_score=h_score,
+                )
             )
             start_interval_time_step = current_node.time_step
             continue
@@ -255,11 +261,9 @@ def continue_space_time_a_star_search(
                     )
                 )
                 continue
+
         for neighbor_node in get_neighbors(env, current_node):
             log = log.bind(neighbor_node=neighbor_node)
-            if reservation_table.is_node_initially_reserved(neighbor_node):
-                log.info("neighbor_node is initially reserved")
-                continue
             next_time_step = current_node.time_step + 1
 
             is_current_node_reserved = False
@@ -305,4 +309,16 @@ def continue_space_time_a_star_search(
                     f_score=node_f_score,
                 )
             )
+        if len(open_set) == 0 and reservation_table.is_node_occupied(
+            current_node,
+            current_node.time_step
+            + 1,  # XXX: it's not right to just add 1 here, likely next_time_step should be used
+            agent=agent,
+        ):
+            log.info("start of the path is already occupied by another agent")
+            reservation_table.cleanup_blocked_node(
+                current_node.to_node(), current_node.time_step + 1, agent
+            )
+            open_set.add(current_node_with_priority)
+
         log = log.try_unbind("neighbor_node")

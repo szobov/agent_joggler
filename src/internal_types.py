@@ -2,6 +2,12 @@ import enum
 import dataclasses
 import typing as _t
 
+import structlog
+
+
+logger = structlog.getLogger(__name__)
+
+
 NodePosition: _t.TypeAlias = int
 NodeState = enum.Enum("NodeState", "FREE RESERVED BLOCKED")
 GridtT: _t.TypeAlias = list[list[NodeState]]
@@ -51,16 +57,9 @@ ReservationTableMapT: _t.TypeAlias = dict[ReservationTableKeyT, Agent]
 @dataclasses.dataclass
 class ReservationTable:
     _reservation_table: ReservationTableMapT = dataclasses.field(default_factory=dict)
-    _initialy_reserved_nodes: dict[Node, Agent] = dataclasses.field(
-        default_factory=dict
+    agents_paths: _t.DefaultDict[Agent, _t.Sequence[NodeWithTime]] = dataclasses.field(
+        default_factory=lambda: _t.DefaultDict(list)
     )
-    agents: dataclasses.InitVar[_t.Sequence[Agent]] = []
-
-    def __post_init__(self, agents: _t.Sequence[Agent]):
-        self._initialy_reserved_nodes = {agent.position: agent for agent in agents}
-
-    def free_initialy_reserved_node(self, node: Node):
-        self._initialy_reserved_nodes.pop(node)
 
     def is_node_occupied(
         self,
@@ -70,18 +69,11 @@ class ReservationTable:
     ) -> bool:
         if isinstance(node, NodeWithTime):
             node = node.to_node()
-        if node in self._initialy_reserved_nodes:
-            return True
         assert isinstance(node, Node)
         key = (node, node, time_step)
         if not agent:
             return key in self._reservation_table
         return key in self._reservation_table and self._reservation_table[key] != agent
-
-    def is_node_initially_reserved(self, node: Node | NodeWithTime) -> bool:
-        if isinstance(node, NodeWithTime):
-            node = node.to_node()
-        return node in self._initialy_reserved_nodes
 
     def is_edge_occupied(
         self,
@@ -101,12 +93,6 @@ class ReservationTable:
         time_step: TimeT,
         agent: Agent,
     ):
-        if node in self._initialy_reserved_nodes:
-            if self._initialy_reserved_nodes[node] == agent:
-                self._initialy_reserved_nodes.pop(node)
-            assert (
-                self._initialy_reserved_nodes[node] == agent
-            ), f"Node is initially reserved by agent, that not moved yet"
         self._reserve_edge(node, node, time_step, agent)
 
     def reserve_edge(
@@ -138,6 +124,64 @@ class ReservationTable:
                 key not in self._reservation_table
             ), f"{key=}, {self._reservation_table=}, {agent=}"
         self._reservation_table[key] = agent
+
+    def cleanup_blocked_node(
+        self, blocked_node: Node, time_step: TimeT, blocked_agent: Agent
+    ):
+        key = (blocked_node, blocked_node, time_step)
+        blocked_by_agent = self._reservation_table.get(key)
+        assert blocked_by_agent is not None
+        assert blocked_by_agent.agent_id != blocked_agent.agent_id
+
+        last_blocked_node_index = -1
+        dropped_index = 0
+        for dropped_index, blocked_by_agent_node in enumerate(
+            reversed(self.agents_paths[blocked_by_agent])
+        ):
+            if blocked_by_agent_node.to_node() != blocked_node:
+                if last_blocked_node_index != -1:
+                    break
+                continue
+            if blocked_by_agent_node.time_step < time_step:
+                break
+            last_blocked_node_index = dropped_index
+
+        blocked_by_agent_path = self.agents_paths[blocked_by_agent]
+        updated_blocked_by_agent_path = blocked_by_agent_path[
+            : len(blocked_by_agent_path) - dropped_index
+        ]
+        blocked_by_agent_to_drop = blocked_by_agent_path[
+            len(blocked_by_agent_path) - dropped_index :
+        ]
+
+        # TODO: I must cleanup all parts of the path in reservation table. N1 -> N2, N1 <- N2,
+        for prev_node, next_node in zip(
+            blocked_by_agent_to_drop, blocked_by_agent_to_drop[1:]
+        ):
+            for wait_time_step in range(prev_node.time_step, next_node.time_step):
+                self._reservation_table.pop(
+                    (prev_node.to_node(), prev_node.to_node(), wait_time_step)
+                )
+            if prev_node.to_node() == next_node.to_node():
+                self._reservation_table.pop(
+                    (prev_node.to_node(), prev_node.to_node(), next_node.time_step)
+                )
+            else:
+                self._reservation_table.pop(
+                    (prev_node.to_node(), next_node.to_node(), next_node.time_step)
+                )
+                self._reservation_table.pop(
+                    (next_node.to_node(), prev_node.to_node(), next_node.time_step)
+                )
+
+        last_node = blocked_by_agent_to_drop[-1]
+        last_node_key = (last_node.to_node(), last_node.to_node(), last_node.time_step)
+        if (
+            last_node_key in self._reservation_table
+            and self._reservation_table[last_node_key] == blocked_by_agent
+        ):
+            self._reservation_table.pop(last_node_key)
+        self.agents_paths[blocked_by_agent] = updated_blocked_by_agent_path
 
 
 @enum.unique
