@@ -1,6 +1,6 @@
 import dataclasses
 import typing as _t
-import random
+import itertools
 
 import structlog
 
@@ -28,8 +28,6 @@ from .reverse_resumable_a_star import (
 )
 
 logger = structlog.getLogger(__name__)
-
-random.seed(42)
 
 
 def make_reservation_table() -> ReservationTable:
@@ -102,10 +100,19 @@ def windowed_hierarhical_cooperative_a_start(
     agent_to_space_time_a_star_search: dict[
         Agent, _t.Generator[_t.Sequence[NodeWithTime], None, None]
     ] = {}
+    agent_iteration_index = -1
     while not all_agent_reached_destination(reservation_table.agents_paths, env):
         try:
-            # TODO: make interleaved searches
-            for agent in random.sample(env.agents, k=len(env.agents)):
+            num_agents = len(env.agents)
+
+            agent_iteration_index += 1
+            agent_iteration_index = agent_iteration_index % num_agents
+
+            for agent in itertools.islice(
+                itertools.cycle(env.agents),
+                agent_iteration_index,
+                agent_iteration_index + num_agents - 1,
+            ):
                 if agent in agent_to_space_time_a_star_search:
                     stas_search = agent_to_space_time_a_star_search[agent]
                 else:
@@ -209,9 +216,6 @@ def continue_space_time_a_star_search(
     while True:
         # XXX: Current problem: node is initially reserved and then ignored during the search.
         # possible solutions:
-        # TODO: check if it would be possible to stay on the node instead of going.
-        #       probably, it should be possible and may solve an issue of agents moving back and forth
-        #       untile path is free.
         # TODO: add more test environments.
         #       A good question if I should add them as tests or just a different envs in environment_builder
         # TODO: try running visualization with arcade-web.
