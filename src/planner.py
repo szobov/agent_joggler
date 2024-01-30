@@ -214,8 +214,6 @@ def continue_space_time_a_star_search(
     start_interval_time_step = 0
 
     while True:
-        # XXX: Current problem: node is initially reserved and then ignored during the search.
-        # possible solutions:
         # TODO: add more test environments.
         #       A good question if I should add them as tests or just a different envs in environment_builder
         # TODO: try running visualization with arcade-web.
