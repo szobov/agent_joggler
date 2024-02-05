@@ -1,3 +1,9 @@
+"""
+Y
+^
+|
+|----> X
+"""
 import arcade
 import random
 import dataclasses
@@ -25,8 +31,14 @@ class Coordinate2D:
 def random_2d_coords(
     range_x: tuple[int, int], range_y: tuple[int, int]
 ) -> Coordinate2D:
-    x = random.randint(range_x[0], range_x[1] - 1)
-    y = random.randint(range_y[0], range_y[1] - 1)
+    if range_x[0] == range_x[1]:
+        x = range_x[0]
+    else:
+        x = random.randint(range_x[0], range_x[1] - 1)
+    if range_y[0] == range_y[1]:
+        y = range_y[0]
+    else:
+        y = random.randint(range_y[0], range_y[1] - 1)
     return Coordinate2D(x, y)
 
 
@@ -62,11 +74,14 @@ class Map:
 
     def _generate_objects(self):
         RANDOMLY_PLACED_OBJECTS = {
-            MapObjectType.MAINTENANCE_AREA,
             MapObjectType.PILLAR,
             MapObjectType.PICKUP_STATION,
         }
 
+        for maintanance_area_id in range(
+            self.configuration.object_numbers[MapObjectType.MAINTENANCE_AREA]
+        ):
+            self._generate_maintenance_area(maintanance_area_id)
         for object_type, num in filter(
             lambda keyval: keyval[0] in RANDOMLY_PLACED_OBJECTS,
             self.configuration.object_numbers.items(),
@@ -161,6 +176,33 @@ class Map:
             },
         )
 
+    def _generate_maintenance_area(self, object_id: int):
+        border = random.randint(0, 3)
+
+        maintenance_size = self.configuration.object_sizes[
+            MapObjectType.MAINTENANCE_AREA
+        ]
+
+        x = (0, self.configuration.width_units - maintenance_size.x)
+        y = (0, self.configuration.height_units - maintenance_size.y)
+
+        if border == 0:  # Bottom
+            y = (0, 0)
+        elif border == 1:  # Right
+            x = (
+                self.configuration.width_units - maintenance_size.x,
+                self.configuration.width_units - maintenance_size.x,
+            )
+        elif border == 2:  # Top
+            y = (
+                self.configuration.height_units - maintenance_size.y,
+                self.configuration.height_units - maintenance_size.y,
+            )
+        else:  # Left
+            x = (0, 0)
+
+        self._generate_object(MapObjectType.MAINTENANCE_AREA, object_id, x, y, set())
+
 
 class WarehouseGanerator(arcade.Window):
     def __init__(self):
@@ -212,10 +254,30 @@ class WarehouseGanerator(arcade.Window):
         pass
 
     def draw_grid(self):
-        for x in range(0, self.width, int(self.unit_pixel_size)):
+        for index, x in enumerate(range(0, self.width, int(self.unit_pixel_size))):
             arcade.draw_line(x, 0, x, self.height, arcade.color.WHITE, 2)
-        for y in range(0, self.height, int(self.unit_pixel_size)):
+            arcade.draw_text(
+                index,
+                x + self.unit_pixel_size // 2,
+                self.unit_pixel_size // 2,
+                arcade.color.WHITE,
+                font_size=12,
+                width=int(self.unit_pixel_size // 2),
+                anchor_x="right",
+                anchor_y="top",
+            )
+        for index, y in enumerate(range(0, self.height, int(self.unit_pixel_size))):
             arcade.draw_line(0, y, self.width, y, arcade.color.WHITE, 2)
+            arcade.draw_text(
+                index,
+                self.unit_pixel_size // 2,
+                y + self.unit_pixel_size // 2,
+                arcade.color.WHITE,
+                font_size=12,
+                width=int(self.unit_pixel_size // 2),
+                anchor_x="right",
+                anchor_y="top",
+            )
 
     def draw_object(
         self,
@@ -252,7 +314,7 @@ class WarehouseGanerator(arcade.Window):
 
 
 def main():
-    window = WarehouseGanerator()
+    WarehouseGanerator()
     arcade.run()
 
 
