@@ -2,6 +2,10 @@ import arcade
 import random
 import dataclasses
 import enum
+import structlog
+
+
+logger = structlog.getLogger(__name__)
 
 
 @enum.unique
@@ -18,13 +22,15 @@ class Coordinate2D:
     y: int
 
 
-def random_2d_coords(width: int, height: int) -> Coordinate2D:
-    x = random.randint(0, width - 1)
-    y = random.randint(0, height - 1)
+def random_2d_coords(
+    range_x: tuple[int, int], range_y: tuple[int, int]
+) -> Coordinate2D:
+    x = random.randint(range_x[0], range_x[1] - 1)
+    y = random.randint(range_y[0], range_y[1] - 1)
     return Coordinate2D(x, y)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, order=True)
 class MapObject:
     coordinates: Coordinate2D
     object_type: MapObjectType
@@ -55,47 +61,105 @@ class Map:
         return object.coordinates.x + size.x, object.coordinates.y + size.y
 
     def _generate_objects(self):
-        for object_type, num in self.configuration.object_numbers.items():
+        RANDOMLY_PLACED_OBJECTS = {
+            MapObjectType.MAINTENANCE_AREA,
+            MapObjectType.PILLAR,
+            MapObjectType.PICKUP_STATION,
+        }
+
+        for object_type, num in filter(
+            lambda keyval: keyval[0] in RANDOMLY_PLACED_OBJECTS,
+            self.configuration.object_numbers.items(),
+        ):
             for object_id in range(num):
-                self._generate_object(object_type, object_id)
+                self._generate_object(
+                    object_type,
+                    object_id,
+                    (0, self.configuration.width_units),
+                    (0, self.configuration.height_units),
+                    ignore_object_overlap=set(),
+                )
+        for agent_id in range(self.configuration.object_numbers[MapObjectType.AGENT]):
+            self._generate_agent(agent_id)
+
         assert len(self.objects) == sum(
             self.configuration.object_numbers.values()
         ), f"{len(self.objects)} == {sum(self.configuration.object_numbers.values())}"
 
-    def _generate_object(self, type: MapObjectType, object_id: int):
+    def _generate_object(
+        self,
+        type: MapObjectType,
+        object_id: int,
+        range_x: tuple[int, int],
+        range_y: tuple[int, int],
+        ignore_object_overlap: set[MapObject],
+    ):
         overlap = True
+        log = logger.bind(
+            object_type=type,
+            object_id=object_id,
+            range_x=range_x,
+            range_y=range_y,
+            ignore_object_overlap=ignore_object_overlap,
+        )
         while overlap:
-            coords = random_2d_coords(
-                self.configuration.width_units, self.configuration.height_units
-            )
+            log.debug("Attempt to place an object on mape")
+            coords = random_2d_coords(range_x, range_y)
+            log = log.bind(coords=coords)
             possible_object = MapObject(coords, type, object_id)
             far_x, far_y = self._get_object_far_corner(possible_object)
 
             overlap = False
-            for other_object in self.objects:
+            for other_object in filter(
+                lambda object: object not in ignore_object_overlap, self.objects
+            ):
                 other_object_far_x, other_object_far_y = self._get_object_far_corner(
                     other_object
                 )
                 overlap_x = (
                     other_object.coordinates.x
                     <= possible_object.coordinates.x
-                    <= other_object_far_x
+                    <= other_object_far_x - 1
                 ) or (
-                    possible_object.coordinates.x <= other_object.coordinates.x <= far_x
+                    possible_object.coordinates.x
+                    <= other_object.coordinates.x
+                    <= far_x - 1
                 )
                 overlap_y = (
                     other_object.coordinates.y
                     <= possible_object.coordinates.y
-                    <= other_object_far_y
+                    <= other_object_far_y - 1
                     or possible_object.coordinates.y
                     <= other_object.coordinates.y
-                    <= far_y
+                    <= far_y - 1
                 )
                 overlap = overlap_x and overlap_y
                 if overlap:
+                    log.debug("object overlaps", other_object=other_object)
                     break
+
             if not overlap:
+                log.debug("Object is placed")
                 self.objects.append(possible_object)
+            log = log.unbind("coords")
+
+    def _generate_agent(self, agent_id: int):
+        maintenance_area = next(
+            filter(
+                lambda obj: obj.object_type == MapObjectType.MAINTENANCE_AREA,
+                random.sample(self.objects, len(self.objects)),
+            )
+        )
+        far_x, far_y = self._get_object_far_corner(maintenance_area)
+        self._generate_object(
+            MapObjectType.AGENT,
+            agent_id,
+            (maintenance_area.coordinates.x, far_x),
+            (maintenance_area.coordinates.y, far_y),
+            ignore_object_overlap={
+                maintenance_area,
+            },
+        )
 
 
 class WarehouseGanerator(arcade.Window):
