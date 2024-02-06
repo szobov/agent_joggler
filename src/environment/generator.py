@@ -4,11 +4,13 @@ Y
 |
 |----> X
 """
+
 import arcade
 import random
 import dataclasses
 import enum
 import structlog
+import itertools
 
 
 logger = structlog.getLogger(__name__)
@@ -26,6 +28,14 @@ class MapObjectType(enum.Enum):
 class Coordinate2D:
     x: int
     y: int
+
+
+@enum.unique
+class Border(enum.Enum):
+    TOP = enum.auto()
+    RIGHT = enum.auto()
+    BOTTOM = enum.auto()
+    LEFT = enum.auto()
 
 
 def random_2d_coords(
@@ -75,7 +85,6 @@ class Map:
     def _generate_objects(self):
         RANDOMLY_PLACED_OBJECTS = {
             MapObjectType.PILLAR,
-            MapObjectType.PICKUP_STATION,
         }
 
         for maintanance_area_id in range(
@@ -97,6 +106,8 @@ class Map:
         for agent_id in range(self.configuration.object_numbers[MapObjectType.AGENT]):
             self._generate_agent(agent_id)
 
+        self._generate_pickup_stations()
+
         assert len(self.objects) == sum(
             self.configuration.object_numbers.values()
         ), f"{len(self.objects)} == {sum(self.configuration.object_numbers.values())}"
@@ -108,7 +119,7 @@ class Map:
         range_x: tuple[int, int],
         range_y: tuple[int, int],
         ignore_object_overlap: set[MapObject],
-    ):
+    ) -> MapObject:
         overlap = True
         log = logger.bind(
             object_type=type,
@@ -120,6 +131,10 @@ class Map:
         while overlap:
             log.debug("Attempt to place an object on mape")
             coords = random_2d_coords(range_x, range_y)
+            coords = Coordinate2D(
+                max(0, min(coords.x, self.configuration.width_units)),
+                max(0, min(coords.y, self.configuration.height_units)),
+            )
             log = log.bind(coords=coords)
             possible_object = MapObject(coords, type, object_id)
             far_x, far_y = self._get_object_far_corner(possible_object)
@@ -156,7 +171,9 @@ class Map:
             if not overlap:
                 log.debug("Object is placed")
                 self.objects.append(possible_object)
+                return possible_object
             log = log.unbind("coords")
+        assert False
 
     def _generate_agent(self, agent_id: int):
         maintenance_area = next(
@@ -177,31 +194,119 @@ class Map:
         )
 
     def _generate_maintenance_area(self, object_id: int):
-        border = random.randint(0, 3)
+        border = random.choice(list(Border))
 
-        maintenance_size = self.configuration.object_sizes[
+        maintenance_area_size = self.configuration.object_sizes[
             MapObjectType.MAINTENANCE_AREA
         ]
+        x_range, y_range = self._get_along_the_border_coordinates_range(
+            border, maintenance_area_size
+        )
 
-        x = (0, self.configuration.width_units - maintenance_size.x)
-        y = (0, self.configuration.height_units - maintenance_size.y)
+        self._generate_object(
+            MapObjectType.MAINTENANCE_AREA, object_id, x_range, y_range, set()
+        )
 
-        if border == 0:  # Bottom
-            y = (0, 0)
-        elif border == 1:  # Right
-            x = (
-                self.configuration.width_units - maintenance_size.x,
-                self.configuration.width_units - maintenance_size.x,
+    def _get_along_the_border_coordinates_range(
+        self, border: Border, object_size: Coordinate2D
+    ) -> tuple[tuple[int, int], tuple[int, int]]:
+        x_range = (0, self.configuration.width_units - object_size.x)
+        y_range = (0, self.configuration.height_units - object_size.y)
+
+        match border:
+            case Border.BOTTOM:
+                y_range = (0, 0)
+            case Border.RIGHT:
+                x_range = (
+                    self.configuration.width_units - object_size.x,
+                    self.configuration.width_units - object_size.x,
+                )
+            case Border.TOP:
+                y_range = (
+                    self.configuration.height_units - object_size.y,
+                    self.configuration.height_units - object_size.y,
+                )
+            case Border.LEFT:
+                x_range = (0, 0)
+        return (x_range, y_range)
+
+    def _generate_pickup_stations(self):
+        num_pickup_stations = self.configuration.object_numbers[
+            MapObjectType.PICKUP_STATION
+        ]
+
+        CLUSTER_SIZE = random.randint(2, 4)
+
+        for pickup_stations in itertools.batched(
+            range(num_pickup_stations), CLUSTER_SIZE
+        ):
+            maintenance_area = next(
+                filter(
+                    lambda obj: obj.object_type == MapObjectType.MAINTENANCE_AREA,
+                    random.sample(self.objects, len(self.objects)),
+                )
             )
-        elif border == 2:  # Top
-            y = (
-                self.configuration.height_units - maintenance_size.y,
-                self.configuration.height_units - maintenance_size.y,
-            )
-        else:  # Left
-            x = (0, 0)
+            maintenance_area_far_corner = self._get_object_far_corner(maintenance_area)
+            maintenance_area_border = Border.LEFT
 
-        self._generate_object(MapObjectType.MAINTENANCE_AREA, object_id, x, y, set())
+            if maintenance_area.coordinates.x == 0:
+                maintenance_area_border = Border.LEFT
+            elif maintenance_area.coordinates.y == 0:
+                maintenance_area_border = Border.BOTTOM
+            elif maintenance_area_far_corner[0] == self.configuration.width_units:
+                maintenance_area_border = Border.RIGHT
+            else:
+                maintenance_area_border = Border.TOP
+
+            pickup_cluster_center_border = Border.RIGHT
+            match maintenance_area_border:
+                case Border.LEFT:
+                    pickup_cluster_center_border = Border.RIGHT
+                case Border.RIGHT:
+                    pickup_cluster_center_border = Border.LEFT
+                case Border.TOP:
+                    pickup_cluster_center_border = Border.BOTTOM
+                case Border.BOTTOM:
+                    pickup_cluster_center_border = Border.TOP
+
+            pickup_stations_center_range = self._get_along_the_border_coordinates_range(
+                pickup_cluster_center_border,
+                self.configuration.object_sizes[MapObjectType.PICKUP_STATION],
+            )
+
+            pickup_stations_ids = list(pickup_stations)
+            pickup_station_center_id = pickup_stations_ids[
+                len(pickup_stations_ids) // 2
+            ]
+
+            pickup_cluster_center_object = self._generate_object(
+                MapObjectType.PICKUP_STATION,
+                pickup_station_center_id,
+                pickup_stations_center_range[0],
+                pickup_stations_center_range[1],
+                set(),
+            )
+            pickup_station_size = self.configuration.object_sizes[
+                MapObjectType.PICKUP_STATION
+            ]
+            for side_stations_id in filter(
+                lambda p_id: p_id != pickup_station_center_id, pickup_stations_ids
+            ):
+                x_offset = random.randint(1, CLUSTER_SIZE) * pickup_station_size.x
+                y_offset = random.randint(1, CLUSTER_SIZE) * pickup_station_size.y
+                self._generate_object(
+                    MapObjectType.PICKUP_STATION,
+                    side_stations_id,
+                    (
+                        pickup_cluster_center_object.coordinates.x - x_offset,
+                        pickup_cluster_center_object.coordinates.x + x_offset,
+                    ),
+                    (
+                        pickup_cluster_center_object.coordinates.y - y_offset,
+                        pickup_cluster_center_object.coordinates.y + y_offset,
+                    ),
+                    set(),
+                )
 
 
 class WarehouseGanerator(arcade.Window):
@@ -219,7 +324,7 @@ class WarehouseGanerator(arcade.Window):
             },
             object_numbers={
                 MapObjectType.MAINTENANCE_AREA: 1,
-                MapObjectType.PICKUP_STATION: 2,
+                MapObjectType.PICKUP_STATION: 3,
                 MapObjectType.PILLAR: 8,
                 MapObjectType.AGENT: 4,
             },
