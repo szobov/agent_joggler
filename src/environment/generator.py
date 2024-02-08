@@ -5,6 +5,7 @@ Y
 |----> X
 """
 
+from typing import Optional
 import arcade
 import random
 import dataclasses
@@ -74,8 +75,11 @@ class MapConfiguration:
 class Map:
     configuration: MapConfiguration
     objects: list[MapObject] = dataclasses.field(default_factory=list)
+    seed: Optional[int] = None
 
     def __post_init__(self):
+        if self.seed is not None:
+            random.seed(self.seed)
         self._generate_objects()
 
     def _get_object_far_corner(self, object: MapObject):
