@@ -15,9 +15,9 @@ from dataclasses import dataclass
 
 
 @dataclass
-class TaskPlanner:
+class OrderPlanner:
     env: Environment
     map: Map
 
-    def assign_tasks(self):
+    def assign_order(self):
         pass
