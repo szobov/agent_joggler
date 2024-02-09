@@ -5,14 +5,16 @@ Y
 |----> X
 """
 
-from typing import Optional
-import arcade
-import random
 import dataclasses
 import enum
-import structlog
 import itertools
+import random
+import typing as _t
+from typing import Optional
 
+import arcade
+import structlog
+from arcade import color
 
 logger = structlog.getLogger(__name__)
 
@@ -20,6 +22,7 @@ logger = structlog.getLogger(__name__)
 @enum.unique
 class MapObjectType(enum.Enum):
     PICKUP_STATION = enum.auto()
+    STACK = enum.auto()
     MAINTENANCE_AREA = enum.auto()
     PILLAR = enum.auto()
     AGENT = enum.auto()
@@ -110,7 +113,12 @@ class Map:
         for agent_id in range(self.configuration.object_numbers[MapObjectType.AGENT]):
             self._generate_agent(agent_id)
 
-        self._generate_pickup_stations()
+        self._generate_clustered_objects(
+            MapObjectType.PICKUP_STATION,
+            opposite_to_type=MapObjectType.MAINTENANCE_AREA,
+        )
+
+        self._generate_clustered_objects(MapObjectType.STACK, opposite_to_type=None)
 
         assert len(self.objects) == sum(
             self.configuration.object_numbers.values()
@@ -234,80 +242,81 @@ class Map:
                 x_range = (0, 0)
         return (x_range, y_range)
 
-    def _generate_pickup_stations(self):
-        num_pickup_stations = self.configuration.object_numbers[
-            MapObjectType.PICKUP_STATION
-        ]
+    def _generate_clustered_objects(
+        self, object_type: MapObjectType, opposite_to_type: _t.Optional[MapObjectType]
+    ):
+        num_objects = self.configuration.object_numbers[object_type]
 
         CLUSTER_SIZE = random.randint(2, 4)
 
-        for pickup_stations in itertools.batched(
-            range(num_pickup_stations), CLUSTER_SIZE
-        ):
-            maintenance_area = next(
-                filter(
-                    lambda obj: obj.object_type == MapObjectType.MAINTENANCE_AREA,
-                    random.sample(self.objects, len(self.objects)),
+        for objects in itertools.batched(range(num_objects), CLUSTER_SIZE):
+            objects_center_range = self._get_along_the_border_coordinates_range(
+                random.choice(list(Border)),
+                self.configuration.object_sizes[object_type],
+            )
+            if opposite_to_type is not None:
+                opposite_object = next(
+                    filter(
+                        lambda obj: obj.object_type == opposite_to_type,
+                        random.sample(self.objects, len(self.objects)),
+                    )
                 )
-            )
-            maintenance_area_far_corner = self._get_object_far_corner(maintenance_area)
-            maintenance_area_border = Border.LEFT
+                opposite_object_far_corner = self._get_object_far_corner(
+                    opposite_object
+                )
+                opposite_object_border = Border.LEFT
 
-            if maintenance_area.coordinates.x == 0:
-                maintenance_area_border = Border.LEFT
-            elif maintenance_area.coordinates.y == 0:
-                maintenance_area_border = Border.BOTTOM
-            elif maintenance_area_far_corner[0] == self.configuration.width_units:
-                maintenance_area_border = Border.RIGHT
-            else:
-                maintenance_area_border = Border.TOP
+                if opposite_object.coordinates.x == 0:
+                    opposite_object_border = Border.LEFT
+                elif opposite_object.coordinates.y == 0:
+                    opposite_object_border = Border.BOTTOM
+                elif opposite_object_far_corner[0] == self.configuration.width_units:
+                    opposite_object_border = Border.RIGHT
+                else:
+                    opposite_object_border = Border.TOP
 
-            pickup_cluster_center_border = Border.RIGHT
-            match maintenance_area_border:
-                case Border.LEFT:
-                    pickup_cluster_center_border = Border.RIGHT
-                case Border.RIGHT:
-                    pickup_cluster_center_border = Border.LEFT
-                case Border.TOP:
-                    pickup_cluster_center_border = Border.BOTTOM
-                case Border.BOTTOM:
-                    pickup_cluster_center_border = Border.TOP
+                pickup_cluster_center_border = Border.RIGHT
+                match opposite_object_border:
+                    case Border.LEFT:
+                        pickup_cluster_center_border = Border.RIGHT
+                    case Border.RIGHT:
+                        pickup_cluster_center_border = Border.LEFT
+                    case Border.TOP:
+                        pickup_cluster_center_border = Border.BOTTOM
+                    case Border.BOTTOM:
+                        pickup_cluster_center_border = Border.TOP
 
-            pickup_stations_center_range = self._get_along_the_border_coordinates_range(
-                pickup_cluster_center_border,
-                self.configuration.object_sizes[MapObjectType.PICKUP_STATION],
-            )
+                objects_center_range = self._get_along_the_border_coordinates_range(
+                    pickup_cluster_center_border,
+                    self.configuration.object_sizes[object_type],
+                )
 
-            pickup_stations_ids = list(pickup_stations)
-            pickup_station_center_id = pickup_stations_ids[
-                len(pickup_stations_ids) // 2
-            ]
+            objects_ids = list(objects)
+            objects_center_id = objects_ids[len(objects_ids) // 2]
 
-            pickup_cluster_center_object = self._generate_object(
-                MapObjectType.PICKUP_STATION,
-                pickup_station_center_id,
-                pickup_stations_center_range[0],
-                pickup_stations_center_range[1],
+            cluster_center_object = self._generate_object(
+                object_type,
+                objects_center_id,
+                objects_center_range[0],
+                objects_center_range[1],
                 set(),
             )
-            pickup_station_size = self.configuration.object_sizes[
-                MapObjectType.PICKUP_STATION
-            ]
-            for side_stations_id in filter(
-                lambda p_id: p_id != pickup_station_center_id, pickup_stations_ids
+            object_size = self.configuration.object_sizes[object_type]
+            for side_object_id in filter(
+                lambda p_id: p_id != objects_center_id, objects_ids
             ):
-                x_offset = random.randint(1, CLUSTER_SIZE) * pickup_station_size.x
-                y_offset = random.randint(1, CLUSTER_SIZE) * pickup_station_size.y
+                x_offset = random.randint(1, CLUSTER_SIZE) * object_size.x
+                y_offset = random.randint(1, CLUSTER_SIZE) * object_size.y
                 self._generate_object(
-                    MapObjectType.PICKUP_STATION,
-                    side_stations_id,
+                    object_type,
+                    side_object_id,
                     (
-                        pickup_cluster_center_object.coordinates.x - x_offset,
-                        pickup_cluster_center_object.coordinates.x + x_offset,
+                        cluster_center_object.coordinates.x - x_offset,
+                        cluster_center_object.coordinates.x + x_offset,
                     ),
                     (
-                        pickup_cluster_center_object.coordinates.y - y_offset,
-                        pickup_cluster_center_object.coordinates.y + y_offset,
+                        cluster_center_object.coordinates.y - y_offset,
+                        cluster_center_object.coordinates.y + y_offset,
                     ),
                     set(),
                 )
@@ -318,16 +327,18 @@ class WarehouseGanerator(arcade.Window):
         super().__init__(800, 600, "Warehouse Generator")
 
         self.map_configuration = MapConfiguration(
-            width_units=20,
-            height_units=15,
+            width_units=18,
+            height_units=6,
             object_sizes={
                 MapObjectType.MAINTENANCE_AREA: Coordinate2D(3, 3),
+                MapObjectType.STACK: Coordinate2D(1, 1),
                 MapObjectType.PICKUP_STATION: Coordinate2D(1, 1),
                 MapObjectType.PILLAR: Coordinate2D(1, 1),
                 MapObjectType.AGENT: Coordinate2D(1, 1),
             },
             object_numbers={
                 MapObjectType.MAINTENANCE_AREA: 1,
+                MapObjectType.STACK: 4,
                 MapObjectType.PICKUP_STATION: 3,
                 MapObjectType.PILLAR: 8,
                 MapObjectType.AGENT: 4,
@@ -336,10 +347,11 @@ class WarehouseGanerator(arcade.Window):
         self.map = Map(self.map_configuration)
 
         self.object_colors = {
-            MapObjectType.MAINTENANCE_AREA: arcade.color.GREEN,
-            MapObjectType.PICKUP_STATION: arcade.color.BLUE,
-            MapObjectType.PILLAR: arcade.color.GRAY,
-            MapObjectType.AGENT: arcade.color.RED,
+            MapObjectType.STACK: color.YELLOW,
+            MapObjectType.MAINTENANCE_AREA: color.GREEN,
+            MapObjectType.PICKUP_STATION: color.BLUE,
+            MapObjectType.PILLAR: color.GRAY,
+            MapObjectType.AGENT: color.RED,
         }
 
         self.unit_pixel_size = min(
@@ -364,24 +376,24 @@ class WarehouseGanerator(arcade.Window):
 
     def draw_grid(self):
         for index, x in enumerate(range(0, self.width, int(self.unit_pixel_size))):
-            arcade.draw_line(x, 0, x, self.height, arcade.color.WHITE, 2)
+            arcade.draw_line(x, 0, x, self.height, color.WHITE, 2)
             arcade.draw_text(
                 index,
                 x + self.unit_pixel_size // 2,
                 self.unit_pixel_size // 2,
-                arcade.color.WHITE,
+                color.WHITE,
                 font_size=12,
                 width=int(self.unit_pixel_size // 2),
                 anchor_x="right",
                 anchor_y="top",
             )
         for index, y in enumerate(range(0, self.height, int(self.unit_pixel_size))):
-            arcade.draw_line(0, y, self.width, y, arcade.color.WHITE, 2)
+            arcade.draw_line(0, y, self.width, y, color.WHITE, 2)
             arcade.draw_text(
                 index,
                 self.unit_pixel_size // 2,
                 y + self.unit_pixel_size // 2,
-                arcade.color.WHITE,
+                color.WHITE,
                 font_size=12,
                 width=int(self.unit_pixel_size // 2),
                 anchor_x="right",
@@ -392,7 +404,7 @@ class WarehouseGanerator(arcade.Window):
         self,
         object: Coordinate2D,
         size: Coordinate2D,
-        color: tuple[int, int, int],
+        object_color: tuple[int, int, int],
         object_id: int,
     ):
         x = object.x
@@ -407,13 +419,13 @@ class WarehouseGanerator(arcade.Window):
 
         text = object_id
 
-        arcade.draw_rectangle_filled(center_x, center_y, size_x, size_y, color)
+        arcade.draw_rectangle_filled(center_x, center_y, size_x, size_y, object_color)
 
         arcade.draw_text(
             text,
             center_x,
             center_y,
-            arcade.color.WHITE,
+            color.WHITE,
             font_size=12,
             width=int(size_x),
             align="center",
