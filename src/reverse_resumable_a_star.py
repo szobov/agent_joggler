@@ -3,8 +3,8 @@ import typing as _t
 from .internal_types import (
     Environment,
     Heuristic,
-    Node,
-    NodeWithTime,
+    Coordinate2D,
+    Coordinate2DWithTime,
     PriorityQueueItem,
 )
 from .common_a_star_utils import (
@@ -16,8 +16,8 @@ from .common_a_star_utils import (
 
 
 def initialize_reverse_resumable_a_star(
-    env: Environment, initial_node: Node, goal_node: Node
-) -> _t.Generator[float, Node, None]:
+    env: Environment, initial_node: Coordinate2D, goal_node: Coordinate2D
+) -> _t.Generator[float, Coordinate2D, None]:
     open_set = OpenSet()
     # For node n, gScore[n] is the cost of the cheapest path
     # from start to n currently known.
@@ -44,13 +44,13 @@ def initialize_reverse_resumable_a_star(
 def resume_reverse_a_star(
     env: Environment,
     open_set: OpenSet,
-    g_score: dict[Node, float],
-    f_score: dict[Node, float],
-) -> _t.Generator[float, Node, None]:
-    closed_set: set[Node] = set()
+    g_score: dict[Coordinate2D, float],
+    f_score: dict[Coordinate2D, float],
+) -> _t.Generator[float, Coordinate2D, None]:
+    closed_set: set[Coordinate2D] = set()
     while True:
-        search_node: Node = yield
-        assert isinstance(search_node, Node)
+        search_node: Coordinate2D = yield
+        assert isinstance(search_node, Coordinate2D)
 
         if search_node in closed_set:
             yield g_score[search_node]
@@ -88,8 +88,10 @@ def resume_reverse_a_star(
 
 # TODO: likely it makes sense to use a clojure and provide a similar interface as Manhattan
 # distance heuristic, so we can call it `abstract_distance`
-def resume_rra(rra: _t.Generator[float, Node, None], node: Node) -> float:
-    if isinstance(node, NodeWithTime):
+def resume_rra(
+    rra: _t.Generator[float, Coordinate2D, None], node: Coordinate2D
+) -> float:
+    if isinstance(node, Coordinate2DWithTime):
         node = node.to_node()
     next(rra)
     g_score = rra.send(node)

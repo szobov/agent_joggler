@@ -1,5 +1,5 @@
 numpy
-arcade
 rich
 structlog
 colorama
+pygame

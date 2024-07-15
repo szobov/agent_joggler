@@ -3,43 +3,72 @@ import dataclasses
 import typing as _t
 
 import structlog
+from dataclasses_avroschema.schema_generator import AvroModel
 
 
 logger = structlog.getLogger(__name__)
 
 
 NodePosition: _t.TypeAlias = int
-NodeState = enum.Enum("NodeState", "FREE RESERVED BLOCKED")
+NodeState = enum.Enum("NodeState", "FREE BLOCKED")
 GridtT: _t.TypeAlias = list[list[NodeState]]
 TimeT: _t.TypeAlias = int
 AgentIdT: _t.TypeAlias = int
+OrderIdT: _t.TypeAlias = int
+
+GeneralObjectIdT: _t.TypeAlias = int
 
 
 @dataclasses.dataclass(frozen=True, order=True)
-class Node:
-    position_x: NodePosition
-    position_y: NodePosition
+class Coordinate2D(AvroModel):
+    x: int
+    y: int
 
 
 @dataclasses.dataclass(frozen=True, order=True)
-class NodeWithTime(Node):
+class Coordinate2DWithTime(Coordinate2D):
     time_step: TimeT
 
     @classmethod
     def from_node(
-        cls: _t.Type["NodeWithTime"], node: Node, time_step: TimeT
-    ) -> "NodeWithTime":
-        return cls(node.position_x, node.position_y, time_step)
+        cls: _t.Type["Coordinate2DWithTime"], node: Coordinate2D, time_step: TimeT
+    ) -> "Coordinate2DWithTime":
+        return cls(node.x, node.y, time_step)
 
-    def to_node(self) -> Node:
-        return Node(self.position_x, self.position_y)
+    def to_node(self) -> Coordinate2D:
+        return Coordinate2D(self.x, self.y)
 
 
 @dataclasses.dataclass(frozen=True)
 class Agent:
     agent_id: AgentIdT
-    position: Node
-    goal: Node
+    position: Coordinate2D
+
+
+@dataclasses.dataclass(frozen=True)
+class PlannerTask(AvroModel):
+    order_id: OrderIdT
+    agent_id: AgentIdT
+    goal: Coordinate2D
+
+
+@dataclasses.dataclass(frozen=True)
+class PlannerTasks(AvroModel):
+    tasks: list[PlannerTask]
+
+
+@dataclasses.dataclass(frozen=True)
+class GlobalStop(AvroModel): ...
+
+
+@dataclasses.dataclass(frozen=True)
+class ProcessStarted(AvroModel):
+    process_name: str
+
+
+@dataclasses.dataclass(frozen=True)
+class GlobalStart(AvroModel):
+    process_name: str
 
 
 @dataclasses.dataclass
@@ -50,26 +79,64 @@ class Environment:
     agents: list[Agent]
 
 
-ReservationTableKeyT: _t.TypeAlias = tuple[Node, Node, TimeT]
+@enum.unique
+class MapObjectType(enum.Enum):
+    PICKUP_STATION = "pickup_station"
+    STACK = "stack"
+    MAINTENANCE_AREA = "mintenance_area"
+    PILLAR = "pillar"
+    AGENT = "agent"
+
+
+@dataclasses.dataclass(frozen=True, order=True)
+class MapObject(AvroModel):
+    coordinates: Coordinate2D
+    object_type: MapObjectType
+    object_id: int
+
+
+@dataclasses.dataclass(frozen=True)
+class MapConfiguration(AvroModel):
+    width_units: int
+    height_units: int
+
+    object_sizes: dict[str, Coordinate2D] = dataclasses.field(default_factory=dict)
+    object_numbers: dict[str, int] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class Map(AvroModel):
+    configuration: MapConfiguration
+    objects: list[MapObject] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(frozen=True)
+class AgentPath(AvroModel):
+    agent_id: AgentIdT
+    path: list[Coordinate2DWithTime]
+
+
+ReservationTableKeyT: _t.TypeAlias = tuple[Coordinate2D, Coordinate2D, TimeT]
 ReservationTableMapT: _t.TypeAlias = dict[ReservationTableKeyT, Agent]
 
 
 @dataclasses.dataclass
 class ReservationTable:
+    time_window: TimeT
     _reservation_table: ReservationTableMapT = dataclasses.field(default_factory=dict)
-    agents_paths: _t.DefaultDict[Agent, _t.Sequence[NodeWithTime]] = dataclasses.field(
-        default_factory=lambda: _t.DefaultDict(list)
+    agents_paths: _t.DefaultDict[Agent, _t.Sequence[Coordinate2DWithTime]] = (
+        dataclasses.field(default_factory=lambda: _t.DefaultDict(list))
     )
 
     def is_node_occupied(
         self,
-        node: Node | NodeWithTime,
+        node: Coordinate2D | Coordinate2DWithTime,
         time_step: TimeT,
         agent: _t.Optional[Agent] = None,
     ) -> bool:
-        if isinstance(node, NodeWithTime):
+        if isinstance(node, Coordinate2DWithTime):
             node = node.to_node()
-        assert isinstance(node, Node)
+        assert isinstance(node, Coordinate2D)
         key = (node, node, time_step)
         if not agent:
             return key in self._reservation_table
@@ -77,19 +144,19 @@ class ReservationTable:
 
     def is_edge_occupied(
         self,
-        node_from: Node | NodeWithTime,
-        node_to: Node | NodeWithTime,
+        node_from: Coordinate2D | Coordinate2DWithTime,
+        node_to: Coordinate2D | Coordinate2DWithTime,
         time_step: TimeT,
     ) -> bool:
-        if isinstance(node_from, NodeWithTime):
+        if isinstance(node_from, Coordinate2DWithTime):
             node_from = node_from.to_node()
-        if isinstance(node_to, NodeWithTime):
+        if isinstance(node_to, Coordinate2DWithTime):
             node_to = node_to.to_node()
         return (node_from, node_to, time_step) in self._reservation_table
 
     def reserve_node(
         self,
-        node: Node | NodeWithTime,
+        node: Coordinate2D | Coordinate2DWithTime,
         time_step: TimeT,
         agent: Agent,
     ):
@@ -97,8 +164,8 @@ class ReservationTable:
 
     def reserve_edge(
         self,
-        node_from: Node | NodeWithTime,
-        node_to: Node | NodeWithTime,
+        node_from: Coordinate2D | Coordinate2DWithTime,
+        node_to: Coordinate2D | Coordinate2DWithTime,
         time_step: TimeT,
         agent: Agent,
     ):
@@ -107,14 +174,14 @@ class ReservationTable:
 
     def _reserve_edge(
         self,
-        node_from: Node | NodeWithTime,
-        node_to: Node | NodeWithTime,
+        node_from: Coordinate2D | Coordinate2DWithTime,
+        node_to: Coordinate2D | Coordinate2DWithTime,
         time_step: TimeT,
         agent: Agent,
     ):
-        if isinstance(node_from, NodeWithTime):
+        if isinstance(node_from, Coordinate2DWithTime):
             node_from = node_from.to_node()
-        if isinstance(node_to, NodeWithTime):
+        if isinstance(node_to, Coordinate2DWithTime):
             node_to = node_to.to_node()
         key = (node_from, node_to, time_step)
         if self.is_edge_occupied(node_from, node_to, time_step):
@@ -125,8 +192,26 @@ class ReservationTable:
             ), f"{key=}, {self._reservation_table=}, {agent=}"
         self._reservation_table[key] = agent
 
+    def _cleanup_path(self, path: _t.Sequence[Coordinate2DWithTime]):
+        for prev_node, next_node in zip(path, path[1:]):
+            for wait_time_step in range(prev_node.time_step, next_node.time_step):
+                self._reservation_table.pop(
+                    (prev_node.to_node(), prev_node.to_node(), wait_time_step)
+                )
+            if prev_node.to_node() == next_node.to_node():
+                self._reservation_table.pop(
+                    (prev_node.to_node(), prev_node.to_node(), next_node.time_step)
+                )
+            else:
+                self._reservation_table.pop(
+                    (prev_node.to_node(), next_node.to_node(), next_node.time_step)
+                )
+                self._reservation_table.pop(
+                    (next_node.to_node(), prev_node.to_node(), next_node.time_step)
+                )
+
     def cleanup_blocked_node(
-        self, blocked_node: Node, time_step: TimeT, blocked_agent: Agent
+        self, blocked_node: Coordinate2D, time_step: TimeT, blocked_agent: Agent
     ):
         key = (blocked_node, blocked_node, time_step)
         blocked_by_agent = self._reservation_table.get(key)
@@ -138,6 +223,9 @@ class ReservationTable:
         for dropped_index, blocked_by_agent_node in enumerate(
             reversed(self.agents_paths[blocked_by_agent])
         ):
+            assert (
+                dropped_index < self.time_window
+            ), "We're not expecting rebuilding path longer that time_window"
             if blocked_by_agent_node.to_node() != blocked_node:
                 if last_blocked_node_index != -1:
                     break
@@ -155,24 +243,7 @@ class ReservationTable:
         ]
 
         # TODO: I must cleanup all parts of the path in reservation table. N1 -> N2, N1 <- N2,
-        for prev_node, next_node in zip(
-            blocked_by_agent_to_drop, blocked_by_agent_to_drop[1:]
-        ):
-            for wait_time_step in range(prev_node.time_step, next_node.time_step):
-                self._reservation_table.pop(
-                    (prev_node.to_node(), prev_node.to_node(), wait_time_step)
-                )
-            if prev_node.to_node() == next_node.to_node():
-                self._reservation_table.pop(
-                    (prev_node.to_node(), prev_node.to_node(), next_node.time_step)
-                )
-            else:
-                self._reservation_table.pop(
-                    (prev_node.to_node(), next_node.to_node(), next_node.time_step)
-                )
-                self._reservation_table.pop(
-                    (next_node.to_node(), prev_node.to_node(), next_node.time_step)
-                )
+        self._cleanup_path(blocked_by_agent_to_drop)
 
         last_node = blocked_by_agent_to_drop[-1]
         last_node_key = (last_node.to_node(), last_node.to_node(), last_node.time_step)
@@ -193,4 +264,4 @@ class Heuristic(enum.Enum):
 @dataclasses.dataclass(frozen=True, order=True)
 class PriorityQueueItem:
     f_score: float
-    node: NodeWithTime | Node
+    node: Coordinate2DWithTime | Coordinate2D

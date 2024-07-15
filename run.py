@@ -1,35 +1,39 @@
-import logging
+from collections.abc import Sequence
 
-import structlog
-from rich.logging import RichHandler
 from rich.traceback import install
 
-from src.environment_builder import build_cross_env
-from src.planner import windowed_hierarhical_cooperative_a_start
-from src.visualizer import EnvironmentVisualizer
+from src import path_planner
+from src.environment import generator
+from src.logger import setup_logging
+from src.orders import order_planner
+from src.runner import (
+    Process,
+    get_process_executor,
+    setup_message_bus,
+    start_processes,
+    supervise_processes,
+)
 
 install(show_locals=True)
 
-
-def setup_logging() -> None:
-    logging.basicConfig(
-        format="[%(asctime)s] %(name)s %(levelname)s in "
-        "%(filename)s:%(lineno)d : %(message)s",
-        handlers=[RichHandler()],
-    )
-    logging.getLogger().setLevel(logging.INFO)
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    )
+setup_logging(name="root")
 
 
 def main():
-    env = build_cross_env()
-    paths = windowed_hierarhical_cooperative_a_start(env)
-    visualizer = EnvironmentVisualizer(800, 800, env, paths)
-    visualizer.run()
+    processes: Sequence[Process] = (
+        generator.get_process(),
+        path_planner.get_process(),
+        order_planner.get_process(),
+    )
+    with get_process_executor() as executor:
+        with setup_message_bus(executor) as message_bus:
+            process_futures = start_processes(executor, processes, message_bus)
+            supervise_processes(
+                executor=executor,
+                process_futures=process_futures,
+                message_bus=message_bus,
+            )
 
 
 if __name__ == "__main__":
-    setup_logging()
     main()

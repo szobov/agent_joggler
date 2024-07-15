@@ -5,6 +5,8 @@ Y
 |----> X
 """
 
+from collections import defaultdict
+import bisect
 import dataclasses
 import enum
 import itertools
@@ -12,26 +14,21 @@ import random
 import typing as _t
 from typing import Optional
 
-import arcade
 import structlog
-from arcade import color
+import pygame
+
+from src.runner import Process, ProcessFinishPolicy
+
+from ..internal_types import (
+    Coordinate2D,
+    Map,
+    MapConfiguration,
+    MapObject,
+    MapObjectType,
+)
+from ..message_transport import MessageBus, MessageBusProtocol, MessageTopic
 
 logger = structlog.getLogger(__name__)
-
-
-@enum.unique
-class MapObjectType(enum.Enum):
-    PICKUP_STATION = enum.auto()
-    STACK = enum.auto()
-    MAINTENANCE_AREA = enum.auto()
-    PILLAR = enum.auto()
-    AGENT = enum.auto()
-
-
-@dataclasses.dataclass(frozen=True)
-class Coordinate2D:
-    x: int
-    y: int
 
 
 @enum.unique
@@ -56,28 +53,9 @@ def random_2d_coords(
     return Coordinate2D(x, y)
 
 
-@dataclasses.dataclass(frozen=True, order=True)
-class MapObject:
-    coordinates: Coordinate2D
-    object_type: MapObjectType
-    object_id: int
-
-
-@dataclasses.dataclass(frozen=True)
-class MapConfiguration:
-    width_units: int
-    height_units: int
-
-    object_sizes: dict[MapObjectType, Coordinate2D] = dataclasses.field(
-        default_factory=dict
-    )
-    object_numbers: dict[MapObjectType, int] = dataclasses.field(default_factory=dict)
-
-
 @dataclasses.dataclass
-class Map:
-    configuration: MapConfiguration
-    objects: list[MapObject] = dataclasses.field(default_factory=list)
+class MapGenerator:
+    map: Map
     seed: Optional[int] = None
 
     def __post_init__(self):
@@ -86,31 +64,33 @@ class Map:
         self._generate_objects()
 
     def _get_object_far_corner(self, object: MapObject):
-        size = self.configuration.object_sizes[object.object_type]
+        size = self.map.configuration.object_sizes[object.object_type.value]
         return object.coordinates.x + size.x, object.coordinates.y + size.y
 
     def _generate_objects(self):
         RANDOMLY_PLACED_OBJECTS = {
-            MapObjectType.PILLAR,
+            MapObjectType.PILLAR.value,
         }
 
         for maintanance_area_id in range(
-            self.configuration.object_numbers[MapObjectType.MAINTENANCE_AREA]
+            self.map.configuration.object_numbers[MapObjectType.MAINTENANCE_AREA.value]
         ):
             self._generate_maintenance_area(maintanance_area_id)
         for object_type, num in filter(
             lambda keyval: keyval[0] in RANDOMLY_PLACED_OBJECTS,
-            self.configuration.object_numbers.items(),
+            self.map.configuration.object_numbers.items(),
         ):
             for object_id in range(num):
                 self._generate_object(
-                    object_type,
+                    MapObjectType(object_type),
                     object_id,
-                    (0, self.configuration.width_units),
-                    (0, self.configuration.height_units),
+                    (0, self.map.configuration.width_units),
+                    (0, self.map.configuration.height_units),
                     ignore_object_overlap=set(),
                 )
-        for agent_id in range(self.configuration.object_numbers[MapObjectType.AGENT]):
+        for agent_id in range(
+            self.map.configuration.object_numbers[MapObjectType.AGENT.value]
+        ):
             self._generate_agent(agent_id)
 
         self._generate_clustered_objects(
@@ -120,9 +100,9 @@ class Map:
 
         self._generate_clustered_objects(MapObjectType.STACK, opposite_to_type=None)
 
-        assert len(self.objects) == sum(
-            self.configuration.object_numbers.values()
-        ), f"{len(self.objects)} == {sum(self.configuration.object_numbers.values())}"
+        assert len(self.map.objects) == sum(
+            self.map.configuration.object_numbers.values()
+        ), f"{len(self.map.objects)} == {sum(self.map.configuration.object_numbers.values())}"
 
     def _generate_object(
         self,
@@ -141,11 +121,11 @@ class Map:
             ignore_object_overlap=ignore_object_overlap,
         )
         while overlap:
-            log.debug("Attempt to place an object on mape")
+            log.debug("Attempt to place an object on map")
             coords = random_2d_coords(range_x, range_y)
             coords = Coordinate2D(
-                max(0, min(coords.x, self.configuration.width_units)),
-                max(0, min(coords.y, self.configuration.height_units)),
+                max(0, min(coords.x, self.map.configuration.width_units)),
+                max(0, min(coords.y, self.map.configuration.height_units)),
             )
             log = log.bind(coords=coords)
             possible_object = MapObject(coords, type, object_id)
@@ -153,7 +133,7 @@ class Map:
 
             overlap = False
             for other_object in filter(
-                lambda object: object not in ignore_object_overlap, self.objects
+                lambda object: object not in ignore_object_overlap, self.map.objects
             ):
                 other_object_far_x, other_object_far_y = self._get_object_far_corner(
                     other_object
@@ -182,7 +162,7 @@ class Map:
 
             if not overlap:
                 log.debug("Object is placed")
-                self.objects.append(possible_object)
+                self.map.objects.append(possible_object)
                 return possible_object
             log = log.unbind("coords")
         assert False
@@ -191,7 +171,7 @@ class Map:
         maintenance_area = next(
             filter(
                 lambda obj: obj.object_type == MapObjectType.MAINTENANCE_AREA,
-                random.sample(self.objects, len(self.objects)),
+                random.sample(self.map.objects, len(self.map.objects)),
             )
         )
         far_x, far_y = self._get_object_far_corner(maintenance_area)
@@ -208,8 +188,8 @@ class Map:
     def _generate_maintenance_area(self, object_id: int):
         border = random.choice(list(Border))
 
-        maintenance_area_size = self.configuration.object_sizes[
-            MapObjectType.MAINTENANCE_AREA
+        maintenance_area_size = self.map.configuration.object_sizes[
+            MapObjectType.MAINTENANCE_AREA.value
         ]
         x_range, y_range = self._get_along_the_border_coordinates_range(
             border, maintenance_area_size
@@ -222,21 +202,21 @@ class Map:
     def _get_along_the_border_coordinates_range(
         self, border: Border, object_size: Coordinate2D
     ) -> tuple[tuple[int, int], tuple[int, int]]:
-        x_range = (0, self.configuration.width_units - object_size.x)
-        y_range = (0, self.configuration.height_units - object_size.y)
+        x_range = (0, self.map.configuration.width_units - object_size.x)
+        y_range = (0, self.map.configuration.height_units - object_size.y)
 
         match border:
             case Border.BOTTOM:
                 y_range = (0, 0)
             case Border.RIGHT:
                 x_range = (
-                    self.configuration.width_units - object_size.x,
-                    self.configuration.width_units - object_size.x,
+                    self.map.configuration.width_units - object_size.x,
+                    self.map.configuration.width_units - object_size.x,
                 )
             case Border.TOP:
                 y_range = (
-                    self.configuration.height_units - object_size.y,
-                    self.configuration.height_units - object_size.y,
+                    self.map.configuration.height_units - object_size.y,
+                    self.map.configuration.height_units - object_size.y,
                 )
             case Border.LEFT:
                 x_range = (0, 0)
@@ -245,20 +225,20 @@ class Map:
     def _generate_clustered_objects(
         self, object_type: MapObjectType, opposite_to_type: _t.Optional[MapObjectType]
     ):
-        num_objects = self.configuration.object_numbers[object_type]
+        num_objects = self.map.configuration.object_numbers[object_type.value]
 
         CLUSTER_SIZE = random.randint(2, 4)
 
         for objects in itertools.batched(range(num_objects), CLUSTER_SIZE):
             objects_center_range = self._get_along_the_border_coordinates_range(
                 random.choice(list(Border)),
-                self.configuration.object_sizes[object_type],
+                self.map.configuration.object_sizes[object_type.value],
             )
             if opposite_to_type is not None:
                 opposite_object = next(
                     filter(
                         lambda obj: obj.object_type == opposite_to_type,
-                        random.sample(self.objects, len(self.objects)),
+                        random.sample(self.map.objects, len(self.map.objects)),
                     )
                 )
                 opposite_object_far_corner = self._get_object_far_corner(
@@ -270,7 +250,9 @@ class Map:
                     opposite_object_border = Border.LEFT
                 elif opposite_object.coordinates.y == 0:
                     opposite_object_border = Border.BOTTOM
-                elif opposite_object_far_corner[0] == self.configuration.width_units:
+                elif (
+                    opposite_object_far_corner[0] == self.map.configuration.width_units
+                ):
                     opposite_object_border = Border.RIGHT
                 else:
                     opposite_object_border = Border.TOP
@@ -288,7 +270,7 @@ class Map:
 
                 objects_center_range = self._get_along_the_border_coordinates_range(
                     pickup_cluster_center_border,
-                    self.configuration.object_sizes[object_type],
+                    self.map.configuration.object_sizes[object_type.value],
                 )
 
             objects_ids = list(objects)
@@ -301,7 +283,7 @@ class Map:
                 objects_center_range[1],
                 set(),
             )
-            object_size = self.configuration.object_sizes[object_type]
+            object_size = self.map.configuration.object_sizes[object_type.value]
             for side_object_id in filter(
                 lambda p_id: p_id != objects_center_id, objects_ids
             ):
@@ -322,122 +304,187 @@ class Map:
                 )
 
 
-class WarehouseGanerator(arcade.Window):
-    def __init__(self):
-        super().__init__(800, 600, "Warehouse Generator")
+class MapVisualizer:
+    def __init__(self, map: Map):
+        pygame.init()
+        self.size = self.width, self.height = 800, 600
+        self.screen = pygame.display.set_mode(self.size)
+        pygame.display.set_caption("Warehouse Generator")
 
-        self.map_configuration = MapConfiguration(
-            width_units=18,
-            height_units=6,
-            object_sizes={
-                MapObjectType.MAINTENANCE_AREA: Coordinate2D(3, 3),
-                MapObjectType.STACK: Coordinate2D(1, 1),
-                MapObjectType.PICKUP_STATION: Coordinate2D(1, 1),
-                MapObjectType.PILLAR: Coordinate2D(1, 1),
-                MapObjectType.AGENT: Coordinate2D(1, 1),
-            },
-            object_numbers={
-                MapObjectType.MAINTENANCE_AREA: 1,
-                MapObjectType.STACK: 4,
-                MapObjectType.PICKUP_STATION: 3,
-                MapObjectType.PILLAR: 8,
-                MapObjectType.AGENT: 4,
-            },
-        )
-        self.map = Map(self.map_configuration)
-
+        self.map = map
+        self.current_step = 0.0
+        self.agent_paths = defaultdict(list)
+        self.agents = {
+            agent.object_id: agent
+            for agent in self.map.objects
+            if agent.object_type == MapObjectType.AGENT
+        }
         self.object_colors = {
-            MapObjectType.STACK: color.YELLOW,
-            MapObjectType.MAINTENANCE_AREA: color.GREEN,
-            MapObjectType.PICKUP_STATION: color.BLUE,
-            MapObjectType.PILLAR: color.GRAY,
-            MapObjectType.AGENT: color.RED,
+            MapObjectType.STACK: pygame.Color("yellow"),
+            MapObjectType.MAINTENANCE_AREA: pygame.Color("green"),
+            MapObjectType.PICKUP_STATION: pygame.Color("blue"),
+            MapObjectType.PILLAR: pygame.Color("gray"),
+            MapObjectType.AGENT: pygame.Color("red"),
         }
 
         self.unit_pixel_size = min(
-            self.width / self.map_configuration.width_units,
-            self.height / self.map_configuration.height_units,
+            self.width / self.map.configuration.width_units,
+            self.height / self.map.configuration.height_units,
         )
 
-    def on_draw(self):
-        arcade.start_render()
-        self.draw_grid()
-        for object in self.map.objects:
-            self.draw_object(
-                object.coordinates,
-                self.map_configuration.object_sizes[object.object_type],
-                self.object_colors[object.object_type],
-                object.object_id,
-            )
+        self.clock = pygame.time.Clock()
 
-    def update(self, delta_time):
-        del delta_time
-        pass
+    def run(self, message_bus: MessageBusProtocol):
+        while not message_bus.get_message(MessageTopic.GLOBAL_STOP, wait=False):
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    return
+
+            self.screen.fill((0, 0, 0))  # Clear screen with black background
+            self.draw_grid()
+            for object in filter(
+                lambda o: o.object_type != MapObjectType.AGENT, self.map.objects
+            ):
+                self.draw_object(
+                    object.coordinates,
+                    self.map.configuration.object_sizes[object.object_type.value],
+                    self.object_colors[object.object_type],
+                    object.object_id,
+                )
+            self.draw_agents(message_bus=message_bus)
+            pygame.display.flip()  # Update the full display Surface to the screen
+            self.clock.tick(60)  # Limit to 60 frames per second
 
     def draw_grid(self):
         for index, x in enumerate(range(0, self.width, int(self.unit_pixel_size))):
-            arcade.draw_line(x, 0, x, self.height, color.WHITE, 2)
-            arcade.draw_text(
-                index,
+            pygame.draw.line(
+                self.screen, pygame.Color("white"), (x, 0), (x, self.height), 2
+            )
+            self.draw_text(
+                str(index),
                 x + self.unit_pixel_size // 2,
                 self.unit_pixel_size // 2,
-                color.WHITE,
-                font_size=12,
-                width=int(self.unit_pixel_size // 2),
-                anchor_x="right",
-                anchor_y="top",
+                pygame.Color("white"),
             )
         for index, y in enumerate(range(0, self.height, int(self.unit_pixel_size))):
-            arcade.draw_line(0, y, self.width, y, color.WHITE, 2)
-            arcade.draw_text(
-                index,
+            pygame.draw.line(
+                self.screen, pygame.Color("white"), (0, y), (self.width, y), 2
+            )
+            self.draw_text(
+                str(index),
                 self.unit_pixel_size // 2,
                 y + self.unit_pixel_size // 2,
-                color.WHITE,
-                font_size=12,
-                width=int(self.unit_pixel_size // 2),
-                anchor_x="right",
-                anchor_y="top",
+                pygame.Color("white"),
             )
 
-    def draw_object(
-        self,
-        object: Coordinate2D,
-        size: Coordinate2D,
-        object_color: tuple[int, int, int],
-        object_id: int,
-    ):
-        x = object.x
-        y = object.y
-        x_pixel = x * self.unit_pixel_size
-        y_pixel = y * self.unit_pixel_size
-        size_x = size.x * self.unit_pixel_size
-        size_y = size.y * self.unit_pixel_size
+    def draw_object(self, object, size, object_color, object_id):
+        x, y = object.x, object.y
+        x_pixel, y_pixel = x * self.unit_pixel_size, y * self.unit_pixel_size
+        size_x, size_y = size.x * self.unit_pixel_size, size.y * self.unit_pixel_size
 
-        center_x = x_pixel + size_x / 2
-        center_y = y_pixel + size_y / 2
+        rect = pygame.Rect(x_pixel, y_pixel, size_x, size_y)
+        pygame.draw.rect(self.screen, object_color, rect)
 
-        text = object_id
-
-        arcade.draw_rectangle_filled(center_x, center_y, size_x, size_y, object_color)
-
-        arcade.draw_text(
-            text,
-            center_x,
-            center_y,
-            color.WHITE,
-            font_size=12,
-            width=int(size_x),
-            align="center",
-            anchor_x="center",
-            anchor_y="center",
+        self.draw_text(
+            str(object_id), rect.centerx, rect.centery, pygame.Color("white")
         )
 
+    def draw_text(self, text, x, y, color):
+        font = pygame.font.Font(None, 24)
+        text_surface = font.render(text, True, color)
+        text_rect = text_surface.get_rect(center=(x, y))
+        self.screen.blit(text_surface, text_rect)
 
-def main():
-    WarehouseGanerator()
-    arcade.run()
+    def draw_agents(self, message_bus: MessageBusProtocol):
+        self.current_step += 0.05
+        while agent_path := message_bus.get_message(
+            MessageTopic.AGENT_PATH, wait=False
+        ):
+            self.agent_paths[agent_path.agent_id] += agent_path.path
+
+        for agent_id, agent in self.agents.items():
+            path = []
+            if agent_id in self.agent_paths:
+                path = self.agent_paths[agent_id]
+
+            if len(path) > 1:
+                step = int(self.current_step)
+                position = bisect.bisect_left(path, step, key=lambda x: x.time_step)
+                if position == len(path):
+                    position -= 1
+                item = path[position]
+
+                if item.time_step == step and position < len(path) - 1:
+                    start = item
+                    end = path[position + 1]
+                elif item.time_step > step and position > 0:
+                    start = path[position - 1]
+                    end = item
+                else:
+                    start = end = item
+
+                dt = self.current_step - step
+                x, y = (
+                    start.x * (1 - dt) + end.x * dt,
+                    start.y * (1 - dt) + end.y * dt,
+                )
+                self.draw_object(
+                    Coordinate2D(x, y),
+                    self.map.configuration.object_sizes[MapObjectType.AGENT.value],
+                    self.object_colors[MapObjectType.AGENT],
+                    agent_id,
+                )
+            else:
+                self.draw_object(
+                    agent.coordinates,
+                    self.map.configuration.object_sizes[MapObjectType.AGENT.value],
+                    self.object_colors[MapObjectType.AGENT],
+                    agent_id,
+                )
 
 
-if __name__ == "__main__":
-    main()
+def get_message_bus() -> MessageBusProtocol:
+    message_bus = MessageBus()
+    message_bus.subscribe(MessageTopic.GLOBAL_STOP)
+    message_bus.subscribe(MessageTopic.AGENT_PATH)
+
+    message_bus.prepare_publisher(MessageTopic.MAP)
+
+    return _t.cast(MessageBusProtocol, message_bus)
+
+
+def main(message_bus: MessageBusProtocol):
+    map_configuration = MapConfiguration(
+        width_units=18,
+        height_units=6,
+        object_sizes={
+            MapObjectType.MAINTENANCE_AREA.value: Coordinate2D(3, 3),
+            MapObjectType.STACK.value: Coordinate2D(1, 1),
+            MapObjectType.PICKUP_STATION.value: Coordinate2D(1, 1),
+            MapObjectType.PILLAR.value: Coordinate2D(1, 1),
+            MapObjectType.AGENT.value: Coordinate2D(1, 1),
+        },
+        object_numbers={
+            MapObjectType.MAINTENANCE_AREA.value: 1,
+            MapObjectType.STACK.value: 4,
+            MapObjectType.PICKUP_STATION.value: 3,
+            MapObjectType.PILLAR.value: 8,
+            MapObjectType.AGENT.value: 4,
+        },
+    )
+    map_generator = MapGenerator(Map(map_configuration), seed=42)
+    map_visualizer = MapVisualizer(map_generator.map)
+    message_bus.send_message(MessageTopic.MAP, message=map_visualizer.map)
+
+    map_visualizer.run(message_bus=message_bus)
+
+
+def get_process() -> Process:
+    return Process(
+        name="environment_generator",
+        subsribe_topics=(MessageTopic.AGENT_PATH,),
+        publish_topics=(MessageTopic.MAP,),
+        process_function=main,
+        process_finish_policy=ProcessFinishPolicy.STOP_ALL,
+    )

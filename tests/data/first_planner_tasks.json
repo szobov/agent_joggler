@@ -1,0 +1,36 @@
+{
+  "tasks": [
+    {
+      "order_id": 0,
+      "agent_id": 0,
+      "goal": {
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "order_id": 0,
+      "agent_id": 1,
+      "goal": {
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "order_id": 1,
+      "agent_id": 2,
+      "goal": {
+        "x": 17,
+        "y": 2
+      }
+    },
+    {
+      "order_id": 2,
+      "agent_id": 3,
+      "goal": {
+        "x": 17,
+        "y": 2
+      }
+    }
+  ]
+}
