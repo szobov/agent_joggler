@@ -39,6 +39,13 @@ class Coordinate2DWithTime(Coordinate2D):
         return Coordinate2D(self.x, self.y)
 
 
+@enum.unique
+class OrderType(enum.Enum):
+    FREEUP = "freeup"
+    PICKUP = "pickup"
+    DELIVERY = "delivery"
+
+
 @dataclasses.dataclass(frozen=True)
 class Agent:
     agent_id: AgentIdT
@@ -46,15 +53,22 @@ class Agent:
 
 
 @dataclasses.dataclass(frozen=True)
-class PlannerTask(AvroModel):
+class Order(AvroModel):
     order_id: OrderIdT
-    agent_id: AgentIdT
+    order_type: OrderType
     goal: Coordinate2D
+    pallet_id: GeneralObjectIdT
 
 
 @dataclasses.dataclass(frozen=True)
-class PlannerTasks(AvroModel):
-    tasks: list[PlannerTask]
+class OrderFinished(AvroModel):
+    order_id: OrderIdT
+    agent_id: AgentIdT
+
+
+@dataclasses.dataclass(frozen=True)
+class Orders(AvroModel):
+    orders: list[Order]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -189,7 +203,7 @@ class ReservationTable:
                 return
             assert (
                 key not in self._reservation_table
-            ), f"{key=}, {self._reservation_table=}, {agent=}"
+            ), f"{key=}, {self._reservation_table[key]=},  {self._reservation_table=}, {agent=}"
         self._reservation_table[key] = agent
 
     def _cleanup_path(self, path: _t.Sequence[Coordinate2DWithTime]):
@@ -212,7 +226,7 @@ class ReservationTable:
 
     def cleanup_blocked_node(
         self, blocked_node: Coordinate2D, time_step: TimeT, blocked_agent: Agent
-    ):
+    ) -> tuple[Agent, TimeT]:
         key = (blocked_node, blocked_node, time_step)
         blocked_by_agent = self._reservation_table.get(key)
         assert blocked_by_agent is not None
@@ -223,6 +237,7 @@ class ReservationTable:
         for dropped_index, blocked_by_agent_node in enumerate(
             reversed(self.agents_paths[blocked_by_agent])
         ):
+            # FIXME: there is should be time_step instead of dropped_index
             assert (
                 dropped_index < self.time_window
             ), "We're not expecting rebuilding path longer that time_window"
@@ -253,6 +268,7 @@ class ReservationTable:
         ):
             self._reservation_table.pop(last_node_key)
         self.agents_paths[blocked_by_agent] = updated_blocked_by_agent_path
+        return blocked_by_agent, blocked_by_agent_to_drop[0].time_step
 
 
 @enum.unique

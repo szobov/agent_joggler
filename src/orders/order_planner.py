@@ -1,9 +1,8 @@
 from collections.abc import Sequence
-import enum
 import itertools
 import random
 from dataclasses import InitVar, dataclass, field
-from typing import Generator, Iterator, cast
+from typing import Iterator, cast
 from collections import OrderedDict
 
 from structlog import get_logger
@@ -13,8 +12,10 @@ from src.environment.generator import Map, MapObject, MapObjectType
 from src.internal_types import (
     AgentIdT,
     GeneralObjectIdT,
-    PlannerTasks,
-    PlannerTask,
+    OrderIdT,
+    OrderType,
+    Orders,
+    Order,
 )
 from src.runner import Process, ProcessFinishPolicy
 
@@ -24,20 +25,6 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class Pallet:
     object_id: GeneralObjectIdT
-
-
-@enum.unique
-class OrderType(enum.Enum):
-    FREEUP = enum.auto()
-    PICKUP = enum.auto()
-    DELIVERY = enum.auto()
-
-
-@dataclass(frozen=True)
-class Order:
-    planner_task: PlannerTask
-    pallet_id: GeneralObjectIdT
-    order_type: OrderType
 
 
 @dataclass
@@ -68,6 +55,7 @@ class OrderPlanner:
     _stacks: dict[GeneralObjectIdT, Stack] = field(init=False)
     _pickup_stations: list[MapObject] = field(init=False)
     _agents: dict[AgentIdT, MapObject] = field(init=False)
+    _number_of_orders: int = field(init=False)
 
     _next_order_id_generator: Iterator[GeneralObjectIdT] = field(
         init=False, default_factory=itertools.count
@@ -99,6 +87,8 @@ class OrderPlanner:
                 self.map.objects,
             )
         }
+        self._number_of_orders = len(self._agents) * 4
+
         assert len(self._agents) > 0
         self._pickup_stations = list(
             filter(
@@ -114,12 +104,11 @@ class OrderPlanner:
             pickup_stations=self._pickup_stations,
         )
 
-    def _generate_pickup_order(self) -> Generator[list[Order], set[AgentIdT], None]:
+    def _generate_orders(self) -> list[Order]:
         target_stack = random.choice(
             list(filter(lambda s: len(s.pallets), self._stacks.values()))
         )
         target_pallet = random.choice(list(target_stack.pallets.values()))
-        order_id = next(self._next_order_id_generator)
         order_sequence: list[Order] = []
 
         logger.info(
@@ -127,145 +116,90 @@ class OrderPlanner:
             target_stack=target_stack,
             target_pallet=target_pallet,
         )
-        free_agents = []
+
         current_pallet = None
         while current_pallet != target_pallet:
+            order_id = next(self._next_order_id_generator)
             current_pallet = target_stack.get_bottom_pallet()
             log = logger.bind(current_pallet=current_pallet)
-            if len(free_agents) == 0:
-                log.debug("no free agents")
-                free_agents = yield order_sequence
-                log.debug("resume with new agents", free_agents=free_agents)
-                order_sequence = []
 
             order_type = OrderType.PICKUP
             if current_pallet != target_pallet:
                 order_type = OrderType.FREEUP
-            agent_id = free_agents.pop()
+
             log.debug(
                 "creating an order",
                 order_id=order_id,
-                agent_id=agent_id,
                 order_type=order_type,
             )
             order_sequence.append(
                 Order(
-                    planner_task=PlannerTask(
-                        order_id=order_id,
-                        agent_id=agent_id,
-                        goal=target_stack.map_object.coordinates,
-                    ),
-                    pallet_id=current_pallet.object_id,
+                    order_id=order_id,
                     order_type=order_type,
+                    goal=target_stack.map_object.coordinates,
+                    pallet_id=current_pallet.object_id,
                 )
             )
-        yield order_sequence
-
-    def _generate_delivery_order(
-        self,
-        agent_id: GeneralObjectIdT,
-        pallet_id: GeneralObjectIdT,
-        previous_order: Order,
-    ) -> Order:
-        target = None
-        if previous_order.order_type == OrderType.PICKUP:
-            target = random.choice(self._pickup_stations)
-        else:
-            # FIXME: suddenly, quadratic asymptotic complexity
-            target_stack = next(
-                filter(
-                    lambda s: (
-                        (len(s.pallets) < self._max_stask_size)
-                        and (
-                            s.map_object.coordinates != previous_order.planner_task.goal
-                        )
+            if order_type == OrderType.FREEUP:
+                # FIXME: suddenly, quadratic asymptotic complexity
+                freeup_delivery_stack = next(
+                    filter(
+                        lambda s: (
+                            (len(s.pallets) < self._max_stask_size)
+                            and (
+                                s.map_object.coordinates
+                                != target_stack.map_object.coordinates
+                            )
+                        ),
+                        random.sample(list(self._stacks.values()), len(self._stacks)),
                     ),
-                    random.sample(list(self._stacks.values()), len(self._stacks)),
-                ),
-                None,
-            )
-            assert target_stack is not None, "No free stacks"
-            target = target_stack.map_object
+                    None,
+                )
 
-        return Order(
-            planner_task=PlannerTask(
+                assert freeup_delivery_stack is not None, "No free stacks"
+                order_sequence.append(
+                    Order(
+                        order_id=next(self._next_order_id_generator),
+                        order_type=order_type,
+                        goal=freeup_delivery_stack.map_object.coordinates,
+                        pallet_id=current_pallet.object_id,
+                    )
+                )
+        pickup_station = random.choice(self._pickup_stations)
+        order_sequence.append(
+            Order(
                 order_id=next(self._next_order_id_generator),
-                agent_id=agent_id,
-                goal=target.coordinates,
-            ),
-            pallet_id=pallet_id,
-            order_type=OrderType.DELIVERY,
+                goal=pickup_station.coordinates,
+                order_type=order_type,
+                pallet_id=target_pallet.object_id,
+            )
         )
 
-    def _process_finished_order(
-        self, agent_id: AgentIdT, order: Order, agent_to_order: dict[AgentIdT, Order]
-    ) -> list[Order]:
-        logger.info("processing finished order", agent_id=agent_id, order=order)
-        new_orders = []
-        match order.order_type:
-            case OrderType.DELIVERY:
-                del agent_to_order[agent_id]
-            case OrderType.PICKUP:
-                new_orders.append(
-                    self._generate_delivery_order(
-                        agent_id=agent_id,
-                        pallet_id=order.pallet_id,
-                        previous_order=order,
-                    )
-                )
-            case OrderType.FREEUP:
-                new_orders.append(
-                    self._generate_delivery_order(
-                        agent_id=agent_id,
-                        pallet_id=order.pallet_id,
-                        previous_order=order,
-                    )
-                )
-        logger.info("new orders", agent_id=agent_id, new_orders=new_orders)
-        return new_orders
+        return order_sequence
 
     def _iterate(
         self,
         message_bus: MessageBusProtocol,
-        agent_to_order: dict[AgentIdT, Order],
-        pickup_orders_generator: Generator[list[Order], set[AgentIdT], None] | None,
-    ) -> tuple[Generator[list[Order], set[AgentIdT], None] | None, Sequence[Order]]:
-        new_orders = []
-        if agent_to_order:
-            agent_path = message_bus.get_message(MessageTopic.AGENT_PATH, wait=True)
-            assert agent_path
-            logger.info(
-                "got new agent_path",
-                agent_path=agent_path,
-                order=agent_to_order.get(agent_path.agent_id),
+        orders: OrderedDict[OrderIdT, Order],
+    ) -> Sequence[Order]:
+        if orders:
+            finished_order = message_bus.get_message(
+                MessageTopic.ORDER_FINISHED, wait=True
             )
+            assert finished_order
+            assert finished_order.order_id in orders, f"{finished_order=}, {orders=}"
+            order = orders[finished_order.order_id]
+            logger.info("got finished", finished_order=finished_order, order=order)
 
-            if agent_path.agent_id in agent_to_order and any(
-                map(
-                    lambda x: x.to_node()
-                    == agent_to_order[agent_path.agent_id].planner_task.goal,
-                    agent_path.path,
-                ),
-            ):
-                finished_order = agent_to_order[agent_path.agent_id]
-                new_orders.extend(
-                    self._process_finished_order(
-                        agent_path.agent_id, finished_order, agent_to_order
-                    )
-                )
-        free_agents = self._agents.keys() - agent_to_order.keys()
-        if not free_agents:
-            return pickup_orders_generator, new_orders
+            del orders[order.order_id]
+        new_orders = []
+        while len(orders) < self._number_of_orders:
+            next_batch = self._generate_orders()
+            for order in next_batch:
+                orders[order.order_id] = order
+            new_orders.extend(next_batch)
 
-        while free_agents:
-            if pickup_orders_generator is None:
-                pickup_orders_generator = self._generate_pickup_order()
-                next(pickup_orders_generator)
-            try:
-                new_orders.extend(pickup_orders_generator.send(free_agents))
-            except StopIteration:
-                pickup_orders_generator = None
-        return pickup_orders_generator, new_orders
+        return new_orders
 
     def _refill_stacks(self):
         for stack in filter(
@@ -277,29 +211,20 @@ class OrderPlanner:
     def _send_orders(
         self,
         message_bus: MessageBusProtocol,
-        agent_to_order: dict[AgentIdT, Order],
         orders: Sequence[Order],
     ):
-        planner_tasks = []
-        for order in orders:
-            agent_to_order[order.planner_task.agent_id] = order
-            planner_tasks.append(order.planner_task)
-        message_bus.send_message(
-            MessageTopic.PLANNER_TASKS, PlannerTasks(tasks=planner_tasks)
-        )
+        message_bus.send_message(MessageTopic.ORDERS, Orders(orders=list(orders)))
 
     def start(self, message_bus: MessageBusProtocol):
-        agent_to_order: dict[AgentIdT, Order] = {}
-        pickup_orders_generator = None
+        orders: OrderedDict[OrderIdT, Order] = OrderedDict()
         while not message_bus.get_message(MessageTopic.GLOBAL_STOP, wait=False):
-            pickup_orders_generator, orders = self._iterate(
-                message_bus, agent_to_order, pickup_orders_generator
-            )
-            if len(orders) == 0:
+            new_orders = self._iterate(message_bus, orders)
+            if len(new_orders) == 0:
                 continue
-            logger.info("send new orders", orders=orders)
+            logger.info("send new orders", orders=new_orders)
             self._send_orders(
-                orders=orders, message_bus=message_bus, agent_to_order=agent_to_order
+                orders=new_orders,
+                message_bus=message_bus,
             )
             self._refill_stacks()
 
@@ -310,7 +235,7 @@ def get_message_bus() -> MessageBusProtocol:
     message_bus.subscribe(MessageTopic.MAP)
     message_bus.subscribe(MessageTopic.AGENT_PATH)
 
-    message_bus.prepare_publisher(MessageTopic.PLANNER_TASKS)
+    message_bus.prepare_publisher(MessageTopic.ORDERS)
 
     return cast(MessageBusProtocol, message_bus)
 
@@ -325,8 +250,8 @@ def main(message_bus: MessageBusProtocol):
 def get_process() -> Process:
     return Process(
         name="order_planner",
-        subsribe_topics=(MessageTopic.MAP, MessageTopic.AGENT_PATH),
-        publish_topics=(MessageTopic.PLANNER_TASKS,),
+        subsribe_topics=(MessageTopic.MAP, MessageTopic.ORDER_FINISHED),
+        publish_topics=(MessageTopic.ORDERS,),
         process_function=main,
         process_finish_policy=ProcessFinishPolicy.STOP_ALL,
     )

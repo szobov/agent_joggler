@@ -59,7 +59,10 @@ def resume_reverse_a_star(
         while len(open_set):
             current_node_with_priority = open_set.pop()
             current_node = current_node_with_priority.node
-            closed_set.add(current_node)
+            if current_node in closed_set:
+                continue
+            else:
+                closed_set.add(current_node)
             if current_node == search_node:
                 yield g_score[current_node]
                 break

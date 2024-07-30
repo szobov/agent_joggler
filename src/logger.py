@@ -11,7 +11,7 @@ def setup_logging(name: str) -> None:
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
         structlog.dev.set_exc_info,
-        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+        structlog.processors.TimeStamper(fmt="iso", utc=False),
         structlog.stdlib.ExtraAdder(),
         structlog.processors.CallsiteParameterAdder(
             {

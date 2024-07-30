@@ -84,8 +84,8 @@ class MapGenerator:
                 self._generate_object(
                     MapObjectType(object_type),
                     object_id,
-                    (0, self.map.configuration.width_units),
-                    (0, self.map.configuration.height_units),
+                    (0, self.map.configuration.width_units - 1),
+                    (0, self.map.configuration.height_units - 1),
                     ignore_object_overlap=set(),
                 )
         for agent_id in range(
@@ -124,8 +124,8 @@ class MapGenerator:
             log.debug("Attempt to place an object on map")
             coords = random_2d_coords(range_x, range_y)
             coords = Coordinate2D(
-                max(0, min(coords.x, self.map.configuration.width_units)),
-                max(0, min(coords.y, self.map.configuration.height_units)),
+                max(0, min(coords.x, self.map.configuration.width_units - 1)),
+                max(0, min(coords.y, self.map.configuration.height_units - 1)),
             )
             log = log.bind(coords=coords)
             possible_object = MapObject(coords, type, object_id)
@@ -202,21 +202,21 @@ class MapGenerator:
     def _get_along_the_border_coordinates_range(
         self, border: Border, object_size: Coordinate2D
     ) -> tuple[tuple[int, int], tuple[int, int]]:
-        x_range = (0, self.map.configuration.width_units - object_size.x)
-        y_range = (0, self.map.configuration.height_units - object_size.y)
+        x_range = (0, self.map.configuration.width_units - 1 - object_size.x)
+        y_range = (0, self.map.configuration.height_units - 1 - object_size.y)
 
         match border:
             case Border.BOTTOM:
                 y_range = (0, 0)
             case Border.RIGHT:
                 x_range = (
-                    self.map.configuration.width_units - object_size.x,
-                    self.map.configuration.width_units - object_size.x,
+                    self.map.configuration.width_units - 1 - object_size.x,
+                    self.map.configuration.width_units - 1 - object_size.x,
                 )
             case Border.TOP:
                 y_range = (
-                    self.map.configuration.height_units - object_size.y,
-                    self.map.configuration.height_units - object_size.y,
+                    self.map.configuration.height_units - 1 - object_size.y,
+                    self.map.configuration.height_units - 1 - object_size.y,
                 )
             case Border.LEFT:
                 x_range = (0, 0)

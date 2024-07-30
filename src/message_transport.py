@@ -2,6 +2,7 @@ import enum
 import functools
 import typing as _t
 import tempfile
+from datetime import datetime
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -12,7 +13,8 @@ import structlog
 from .internal_types import (
     GlobalStart,
     Map,
-    PlannerTasks,
+    OrderFinished,
+    Orders,
     AgentPath,
     GlobalStop,
     ProcessStarted,
@@ -26,18 +28,20 @@ SOCKET_WAIT_TIMEOUT_MS = 5 * 100
 @enum.unique
 class MessageTopic(enum.Enum):
     MAP = "map"
-    PLANNER_TASKS = "planner_tasks"
+    ORDERS = "orders"
     AGENT_PATH = "agent_path"
     GLOBAL_STOP = "global_stop"
     PROCESS_STARTED = "process_started"
     GLOBAL_START = "global_start"
+    ORDER_FINISHED = "order_finished"
 
 
 MessageTopicToMessageClass = {
-    MessageTopic.PLANNER_TASKS: PlannerTasks,
+    MessageTopic.ORDERS: Orders,
     MessageTopic.GLOBAL_STOP: GlobalStop,
     MessageTopic.AGENT_PATH: AgentPath,
     MessageTopic.MAP: Map,
+    MessageTopic.ORDER_FINISHED: OrderFinished,
     MessageTopic.PROCESS_STARTED: ProcessStarted,
     MessageTopic.GLOBAL_START: GlobalStart,
 }
@@ -119,7 +123,14 @@ class MessageBusProtocol(_t.Protocol):
 
     @_t.overload
     def send_message(
-        self, topic: _t.Literal[MessageTopic.PLANNER_TASKS], message: PlannerTasks
+        self, topic: _t.Literal[MessageTopic.ORDERS], message: Orders
+    ) -> None: ...
+
+    @_t.overload
+    def send_message(
+        self,
+        topic: _t.Literal[MessageTopic.ORDER_FINISHED],
+        message: OrderFinished,
     ) -> None: ...
 
     @_t.overload
@@ -141,8 +152,13 @@ class MessageBusProtocol(_t.Protocol):
 
     @_t.overload
     def get_message(
-        self, topic: _t.Literal[MessageTopic.PLANNER_TASKS], wait: bool
-    ) -> _t.Optional[PlannerTasks]: ...
+        self, topic: _t.Literal[MessageTopic.ORDERS], wait: bool
+    ) -> _t.Optional[Orders]: ...
+
+    @_t.overload
+    def get_message(
+        self, topic: _t.Literal[MessageTopic.ORDER_FINISHED], wait: bool
+    ) -> _t.Optional[OrderFinished]: ...
 
     @_t.overload
     def get_message(
@@ -153,8 +169,11 @@ class MessageBusProtocol(_t.Protocol):
 
 
 def dump_message_to_filesystem(message: AvroModel):
+    current_time = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p")
     with tempfile.NamedTemporaryFile(
-        prefix=f"message_{str(type(message).__name__).lower()}", delete=False, mode="wb"
+        prefix=f"message_{str(type(message).__name__).lower()}_{current_time}",
+        delete=False,
+        mode="wb",
     ) as temp_file:
         temp_file.write(message.serialize(serialization_type="avro-json"))
         logger.info("dumped a message", path=temp_file.name, message=message)
@@ -196,6 +215,9 @@ class MessageBus:
         self._publish_socket.send_multipart([topic_encoded, message.serialize()])
 
     def get_message(self, topic: MessageTopic, wait: bool) -> _t.Optional[AvroModel]:
+        if self._topic_to_received_message[topic]:
+            message = self._topic_to_received_message[topic].popleft()
+            return message
         self._receive_raw_messages(expected_topic=topic, wait=wait)
         if self._topic_to_received_message[topic]:
             message = self._topic_to_received_message[topic].popleft()
@@ -210,7 +232,7 @@ class MessageBus:
         return message
 
     def _receive_raw_messages(self, expected_topic: MessageTopic, wait: bool) -> None:
-        BATCH_SIZE = 10
+        BATCH_SIZE = 1 if wait else 10
         for _ in range(BATCH_SIZE):
             try:
                 flag = 0
