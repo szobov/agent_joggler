@@ -1,4 +1,6 @@
 import enum
+import os
+import random
 import time
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -29,6 +31,12 @@ logger = structlog.getLogger(__name__)
 
 PROCESS_START_TIMEOUT_SEC = 5.0
 RUNNER_FUTURE_WAIT_TIMEOUT_SEC = 5.0
+
+
+def set_random_seed_if_passed() -> int | None:
+    random_seed = os.environ.get("PYTHON_RANDOM_SEED")
+    if random_seed is not None:
+        random.seed(int(random_seed))
 
 
 def get_deadline(timeout: float) -> float:
@@ -67,6 +75,8 @@ class ProcessFuture(NamedTuple):
 
 def _runner(process: Process):
     setup_logging(process.name)
+    set_random_seed_if_passed()
+
     message_bus = MessageBus()
     log = logger.bind(process=process)
     log.info("Starting process...")
