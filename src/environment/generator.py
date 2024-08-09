@@ -56,11 +56,8 @@ def random_2d_coords(
 @dataclasses.dataclass
 class MapGenerator:
     map: Map
-    seed: Optional[int] = None
 
     def __post_init__(self):
-        if self.seed is not None:
-            random.seed(self.seed)
         self._generate_objects()
 
     def _get_object_far_corner(self, object: MapObject):
@@ -473,7 +470,7 @@ def main(message_bus: MessageBusProtocol):
             MapObjectType.AGENT.value: 4,
         },
     )
-    map_generator = MapGenerator(Map(map_configuration), seed=42)
+    map_generator = MapGenerator(Map(map_configuration))
     map_visualizer = MapVisualizer(map_generator.map)
     message_bus.send_message(MessageTopic.MAP, message=map_visualizer.map)
 
