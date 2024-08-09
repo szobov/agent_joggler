@@ -55,7 +55,6 @@ def _get_zmq_context() -> zmq.Context:
     return zmq.Context()
 
 
-@functools.lru_cache(maxsize=1)
 def _get_zmq_socket(context: zmq.Context, socket_type: int) -> zmq.Socket:
     return context.socket(socket_type)
 
