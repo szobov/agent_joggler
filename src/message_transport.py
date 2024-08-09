@@ -1,5 +1,4 @@
 import enum
-import functools
 import typing as _t
 import tempfile
 from datetime import datetime
@@ -23,6 +22,10 @@ from .internal_types import (
 logger = structlog.get_logger(__name__)
 
 SOCKET_WAIT_TIMEOUT_MS = 5 * 100
+
+
+class MessageBusGlobalStop(Exception):
+    pass
 
 
 @enum.unique
@@ -256,3 +259,5 @@ class MessageBus:
             self._topic_to_received_message[topic].append(message)
             if topic == expected_topic:
                 return
+            if wait and topic is MessageTopic.GLOBAL_STOP:
+                raise MessageBusGlobalStop("Received Global Stop message")
