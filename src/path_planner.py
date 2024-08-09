@@ -11,7 +11,6 @@ from src.runner import Process, ProcessFinishPolicy
 from .message_transport import (
     MessageBusProtocol,
     MessageTopic,
-    dump_message_to_filesystem,
 )
 
 from .internal_types import (
@@ -130,6 +129,15 @@ class OrderTracker:
         for order in orders.orders:
             self.not_assigned_orders.append(order)
 
+    def iterate_finished_orders(
+        self, agent: Agent, time_step: TimeT
+    ) -> _t.Iterator[Order]:
+        for time_stamp, _ in self.finished_orders[agent].copy():
+            if time_stamp < time_step:
+                yield self.finished_orders[agent].popleft()[1]
+            else:
+                break
+
     def assign_order(self, agent: Agent) -> Coordinate2D:
         log = self.logger.bind(agent=agent)
         log.info("assign order")
@@ -220,6 +228,7 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
     ],
     agent_iteration_index: int,
     agent_path_last_sent_timestep: dict[Agent, TimeT],
+    cleanedup_agents: set[Agent],
 ):
     wait = False
     if len(order_tracker.not_assigned_orders) == 0 and not any(
@@ -231,18 +240,30 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
     if new_orders:
         logger.info("received new orders", new_orders=new_orders)
         order_tracker.add_orders(new_orders)
-        dump_message_to_filesystem(new_orders)
 
     num_agents = len(env.agents)
 
     agent_iteration_index += 1
     agent_iteration_index = agent_iteration_index % num_agents
+    last_time_steps = [
+        path[-1].time_step for path in reservation_table.agents_paths.values() if path
+    ]
+    agents_to_ignore = set()
+    if last_time_steps:
+        min_last_time_steps = min(last_time_steps)
+        agents_to_ignore = set(
+            agent
+            for agent, path in reservation_table.agents_paths.items()
+            if path and path[-1].time_step - min_last_time_steps > time_window
+        )
 
     for agent in itertools.islice(
         itertools.cycle(env.agents),
         agent_iteration_index,
         agent_iteration_index + num_agents,
     ):
+        if agent in agents_to_ignore:
+            continue
         goal = agent_id_to_goal.get(agent.agent_id, agent.position)
         initial_pose = agent.position
         time_step = 0
@@ -259,6 +280,7 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
                 timestep=time_step,
                 initial_pose=initial_pose,
                 order_tracker=order_tracker,
+                cleanedup_agents=cleanedup_agents,
             )
             agent_to_space_time_a_star_search[agent] = stas_search
         new_partial_path = list(next(stas_search))
@@ -276,6 +298,22 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
         reservation_table.agents_paths[agent] = (
             list(previous_partial_path) + new_partial_path
         )
+        while cleanedup_agents:
+            agent = cleanedup_agents.pop()
+            order = order_tracker.assigned_order[agent]
+            agent_to_space_time_a_star_search[agent] = _rebuild_a_start_from_last_node(
+                agent=agent,
+                reservation_table=reservation_table,
+                env=env,
+                goal_node=order.goal,
+                time_window=time_window,
+                order_tracker=order_tracker,
+                cleanedup_agents=cleanedup_agents,
+            )
+    min_last_time_step = min(
+        path[-1].time_step for path in reservation_table.agents_paths.values() if path
+    )
+    reservation_table.cleanup(min_last_time_step - time_window * 4)
     _post_iteration(
         message_bus=message_bus,
         env=env,
@@ -285,6 +323,34 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
         agent_path_last_sent_timestep=agent_path_last_sent_timestep,
         agent_to_space_time_a_star_search=agent_to_space_time_a_star_search,
         agent_id_to_goal=agent_id_to_goal,
+        cleanedup_agents=cleanedup_agents,
+    )
+
+
+def _rebuild_a_start_from_last_node(
+    *,
+    agent: Agent,
+    reservation_table: ReservationTable,
+    env: Environment,
+    goal_node: Coordinate2D,
+    time_window: TimeT,
+    order_tracker: OrderTracker,
+    cleanedup_agents: set[Agent],
+):
+    last_position = reservation_table.agents_paths[agent][-1]
+    initial_pose = last_position.to_node()
+    time_step = last_position.time_step
+
+    return space_time_a_star_search(
+        env=env,
+        reservation_table=reservation_table,
+        agent=agent,
+        time_window=time_window,
+        goal=goal_node,
+        timestep=time_step,
+        initial_pose=initial_pose,
+        order_tracker=order_tracker,
+        cleanedup_agents=cleanedup_agents,
     )
 
 
@@ -299,29 +365,39 @@ def _post_iteration(
         Agent, _t.Generator[_t.Sequence[Coordinate2DWithTime], None, None]
     ],
     agent_id_to_goal: dict[AgentIdT, Coordinate2D],
+    cleanedup_agents: set[Agent],
 ):
     for agent, path in reservation_table.agents_paths.items():
-        last_timestep_sent = agent_path_last_sent_timestep[agent]
-        if (path[-1].time_step - last_timestep_sent) >= time_window * 2:
-            for node_index, node in enumerate(path):
-                if node.time_step - last_timestep_sent > time_window:
-                    break
-            path_to_send = path[:node_index]
-            rest = path[node_index:]
-            agent_path_last_sent_timestep[agent] = path_to_send[-1].time_step
-            reservation_table.agents_paths[agent] = rest
-            logger.info(
-                "send new partial path",
-                partial_path=path_to_send,
-                rest_path=rest,
-                agent=agent,
+
+        last_time_step = path[-1].time_step
+        for node_index, node in enumerate(reversed(path)):
+            if last_time_step - node.time_step > time_window * 2:
+                break
+        else:
+            continue
+        path_to_send = path[: len(path) - node_index]
+        rest = path[len(path) - node_index :]
+
+        agent_path_last_sent_timestep[agent] = path_to_send[-1].time_step
+        reservation_table.agents_paths[agent] = rest
+        logger.info(
+            "send new partial path",
+            partial_path=path_to_send,
+            rest_path=rest,
+            agent=agent,
+        )
+        if path_to_send:
+            message_bus.send_message(
+                MessageTopic.AGENT_PATH,
+                AgentPath(agent_id=agent.agent_id, path=list(path_to_send)),
             )
-            if path_to_send:
+            last_time_step = path_to_send[-1].time_step
+            for order in order_tracker.iterate_finished_orders(agent, last_time_step):
                 message_bus.send_message(
-                    MessageTopic.AGENT_PATH,
-                    AgentPath(agent_id=agent.agent_id, path=list(path_to_send)),
+                    MessageTopic.ORDER_FINISHED,
+                    OrderFinished(order.order_id, agent_id=agent.agent_id),
                 )
-            # check for goal is reached
+        # check for goal is reached
         goal_node = agent_id_to_goal.get(agent.agent_id)
         for node in path:
             if (
@@ -333,32 +409,20 @@ def _post_iteration(
             if node.to_node() != goal_node:
                 continue
             if agent in order_tracker.assigned_order:
-                current_task = order_tracker.assigned_order[agent]
-                message_bus.send_message(
-                    MessageTopic.ORDER_FINISHED,
-                    OrderFinished(current_task.order_id, agent_id=agent.agent_id),
-                )
                 order_tracker.agent_finished_task(agent, node.time_step)
             new_goal_node = order_tracker.assign_order(agent)
             agent_id_to_goal[agent.agent_id] = new_goal_node
 
             assert len(reservation_table.agents_paths[agent]) != 0
-
-            last_position = reservation_table.agents_paths[agent][-1]
-            initial_pose = last_position.to_node()
-            time_step = last_position.time_step
-
-            stas_search = space_time_a_star_search(
+            agent_to_space_time_a_star_search[agent] = _rebuild_a_start_from_last_node(
                 env=env,
-                reservation_table=reservation_table,
                 agent=agent,
+                goal_node=new_goal_node,
                 time_window=time_window,
-                goal=new_goal_node,
-                timestep=time_step,
-                initial_pose=initial_pose,
                 order_tracker=order_tracker,
+                cleanedup_agents=cleanedup_agents,
+                reservation_table=reservation_table,
             )
-            agent_to_space_time_a_star_search[agent] = stas_search
             break
 
         # XXX: I send the path here, and when I did it, shouldn't I
@@ -383,7 +447,6 @@ def windowed_hierarhical_cooperative_a_start(
     logger.info("waiting for first orders")
     orders = message_bus.get_message(topic=MessageTopic.ORDERS, wait=True)
     assert orders
-    dump_message_to_filesystem(orders)
     agent_to_space_time_a_star_search: dict[
         Agent, _t.Generator[_t.Sequence[Coordinate2DWithTime], None, None]
     ] = {}
@@ -399,6 +462,8 @@ def windowed_hierarhical_cooperative_a_start(
     agent_path_last_sent_timestep: dict[Agent, TimeT] = {
         agent: 0 for agent in env.agents
     }
+
+    cleanedup_agents: set[Agent] = set()
     logger.info("planning loop is started", initial_tasks=orders)
     while not message_bus.get_message(MessageTopic.GLOBAL_STOP, wait=False):
         _windowed_hierarhical_cooperative_a_start_iteration(
@@ -411,6 +476,7 @@ def windowed_hierarhical_cooperative_a_start(
             agent_path_last_sent_timestep=agent_path_last_sent_timestep,
             reservation_table=reservation_table,
             env=env,
+            cleanedup_agents=cleanedup_agents,
         )
     return
 
@@ -424,6 +490,7 @@ def space_time_a_star_search(
     timestep: TimeT,
     initial_pose: Coordinate2D,
     order_tracker: OrderTracker,
+    cleanedup_agents: set[Agent],
 ) -> _t.Generator[_t.Sequence[Coordinate2DWithTime], None, None]:
     logger.info(
         "starting new space_time_a*", agent=agent, goal=goal, time_step=timestep
@@ -455,6 +522,7 @@ def space_time_a_star_search(
         agent=agent,
         goal=goal,
         order_tracker=order_tracker,
+        cleanedup_agents=cleanedup_agents,
     )
 
 
@@ -469,6 +537,7 @@ def continue_space_time_a_star_search(
     agent: Agent,
     goal: Coordinate2D,
     order_tracker: OrderTracker,
+    cleanedup_agents: set[Agent],
 ) -> _t.Generator[_t.Sequence[Coordinate2DWithTime], None, None]:
     came_from: dict[Coordinate2DWithTime, Coordinate2DWithTime] = dict()
     terminal_node = goal
@@ -547,6 +616,9 @@ def continue_space_time_a_star_search(
                 log.debug("current_node is reserved. Abandoning this branch...")
                 continue
             wait_time = next_time_step - current_node.time_step - 1
+            assert (
+                current_node.to_node() in g_score
+            ), f"{current_node=}, {agent=}, {g_score=}"
             tentative_g_score = g_score[current_node.to_node()] + edge_cost(
                 env, current_node, neighbor_node
             )
@@ -581,9 +653,11 @@ def continue_space_time_a_star_search(
             blocked_by_agent, cleanup_until = reservation_table.cleanup_blocked_node(
                 current_node.to_node(), current_node.time_step + 1, agent
             )
+            cleanedup_agents.add(blocked_by_agent)
             order_tracker.validate_finished_tasks(
                 cleaned_up_time_step=cleanup_until, agent=blocked_by_agent
             )
+
             open_set.add(current_node_with_priority)
 
         log = log.try_unbind("neighbor_node")
