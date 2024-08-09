@@ -142,6 +142,11 @@ class ReservationTable:
         dataclasses.field(default_factory=lambda: _t.DefaultDict(list))
     )
 
+    def cleanup(self, time_step: TimeT):
+        for key in list(self._reservation_table.keys()):
+            if key[2] < time_step:
+                self._reservation_table.pop(key)
+
     def is_node_occupied(
         self,
         node: Coordinate2D | Coordinate2DWithTime,
@@ -201,22 +206,21 @@ class ReservationTable:
         if self.is_edge_occupied(node_from, node_to, time_step):
             if self._reservation_table[key] == agent:
                 return
-            assert (
-                key not in self._reservation_table
-            ), f"{key=}, {self._reservation_table[key]=},  {self._reservation_table=}, {agent=}"
+        assert (
+            key not in self._reservation_table
+        ), f"{key=}, {self._reservation_table[key]=},  {self._reservation_table=}, {agent=}"
         self._reservation_table[key] = agent
 
     def _cleanup_path(self, path: _t.Sequence[Coordinate2DWithTime]):
         for prev_node, next_node in zip(path, path[1:]):
             for wait_time_step in range(prev_node.time_step, next_node.time_step):
-                self._reservation_table.pop(
-                    (prev_node.to_node(), prev_node.to_node(), wait_time_step)
-                )
-            if prev_node.to_node() == next_node.to_node():
-                self._reservation_table.pop(
-                    (prev_node.to_node(), prev_node.to_node(), next_node.time_step)
-                )
-            else:
+                key = (prev_node.to_node(), prev_node.to_node(), wait_time_step)
+                assert (
+                    key in self._reservation_table
+                ), f"{key=}, {self._reservation_table=}"
+                self._reservation_table.pop(key)
+
+            if prev_node.to_node() != next_node.to_node():
                 self._reservation_table.pop(
                     (prev_node.to_node(), next_node.to_node(), next_node.time_step)
                 )
@@ -232,15 +236,24 @@ class ReservationTable:
         assert blocked_by_agent is not None
         assert blocked_by_agent.agent_id != blocked_agent.agent_id
 
+        blocked_by_agent_path = self.agents_paths[blocked_by_agent]
+        logger.info(
+            "cleaning up blocked node",
+            key=key,
+            blocked_by_agent=blocked_by_agent,
+            blocked_by_agent_path=blocked_by_agent_path,
+        )
+
         last_blocked_node_index = -1
         dropped_index = 0
+        last_time_step = blocked_by_agent_path[-1].time_step
+        max_time_step_limit = last_time_step - time_step
         for dropped_index, blocked_by_agent_node in enumerate(
-            reversed(self.agents_paths[blocked_by_agent])
+            reversed(blocked_by_agent_path)
         ):
-            # FIXME: there is should be time_step instead of dropped_index
             assert (
-                dropped_index < self.time_window
-            ), "We're not expecting rebuilding path longer that time_window"
+                blocked_by_agent_node.time_step > max_time_step_limit
+            ), f"We're not expecting rebuilding path longer than {self.time_window}. {dropped_index=}"
             if blocked_by_agent_node.to_node() != blocked_node:
                 if last_blocked_node_index != -1:
                     break
@@ -249,7 +262,6 @@ class ReservationTable:
                 break
             last_blocked_node_index = dropped_index
 
-        blocked_by_agent_path = self.agents_paths[blocked_by_agent]
         updated_blocked_by_agent_path = blocked_by_agent_path[
             : len(blocked_by_agent_path) - dropped_index
         ]
