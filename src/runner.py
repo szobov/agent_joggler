@@ -187,7 +187,7 @@ def start_processes(
     if len(started_processes) != len(processes):
         logger.error(
             "Processes were not started withing the timeout",
-            expected_processes=process,
+            processes=processes,
             timeout=PROCESS_START_TIMEOUT_SEC,
             started_processes=started_processes,
             futures=futures,
