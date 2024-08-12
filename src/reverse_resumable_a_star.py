@@ -17,7 +17,7 @@ from .common_a_star_utils import (
 
 def initialize_reverse_resumable_a_star(
     env: Environment, initial_node: Coordinate2D, goal_node: Coordinate2D
-) -> _t.Generator[float, Coordinate2D, None]:
+) -> _t.Generator[float | None, Coordinate2D, None]:
     open_set = OpenSet()
     # For node n, gScore[n] is the cost of the cheapest path
     # from start to n currently known.
@@ -45,7 +45,7 @@ def resume_reverse_a_star(
     env: Environment,
     open_set: OpenSet,
     g_score: dict[Coordinate2D, float],
-) -> _t.Generator[float, Coordinate2D, None]:
+) -> _t.Generator[float | None, Coordinate2D, None]:
     closed_set: set[Coordinate2D] = set()
     while True:
         search_node: Coordinate2D = yield
@@ -91,7 +91,7 @@ def resume_reverse_a_star(
 # TODO: likely it makes sense to use a clojure and provide a similar interface as Manhattan
 # distance heuristic, so we can call it `abstract_distance`
 def resume_rra(
-    rra: _t.Generator[float, Coordinate2D, None], node: Coordinate2D
+    rra: _t.Generator[float | None, Coordinate2D, None], node: Coordinate2D
 ) -> float:
     if isinstance(node, Coordinate2DWithTime):
         node = node.to_node()
