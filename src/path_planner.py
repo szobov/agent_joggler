@@ -154,6 +154,7 @@ class OrderTracker:
             _, prev_order = self.finished_orders[agent][0]
             log.info("searching for next delivery order", prev_order=prev_order)
             accumulator: list[Order] = []
+            next_order = None
             while self.not_assigned_orders:
                 next_order = self.not_assigned_orders.popleft()
                 if (
@@ -172,6 +173,7 @@ class OrderTracker:
         else:
             next_order = self.not_assigned_orders.popleft()
             log.info("next order", next_order=next_order)
+        assert next_order is not None
         self.assigned_order[agent] = next_order
         return next_order.goal
 
