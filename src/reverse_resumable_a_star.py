@@ -38,14 +38,13 @@ def initialize_reverse_resumable_a_star(
             initial_node,
         )
     )
-    return resume_reverse_a_star(env, open_set, g_score, f_score)
+    return resume_reverse_a_star(env, open_set, g_score)
 
 
 def resume_reverse_a_star(
     env: Environment,
     open_set: OpenSet,
     g_score: dict[Coordinate2D, float],
-    f_score: dict[Coordinate2D, float],
 ) -> _t.Generator[float, Coordinate2D, None]:
     closed_set: set[Coordinate2D] = set()
     while True:
