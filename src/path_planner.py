@@ -535,7 +535,7 @@ def continue_space_time_a_star_search(
     open_set: OpenSet,
     g_score: dict[Coordinate2D, float],
     f_score: dict[Coordinate2D, float],
-    rra: _t.Generator[float, Coordinate2D, None],
+    rra: _t.Generator[float | None, Coordinate2D, None],
     agent: Agent,
     goal: Coordinate2D,
     order_tracker: OrderTracker,
