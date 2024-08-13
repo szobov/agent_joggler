@@ -302,12 +302,14 @@ def _windowed_hierarhical_cooperative_a_start_iteration(
         )
         while cleanedup_agents:
             agent = cleanedup_agents.pop()
-            order = order_tracker.assigned_order[agent]
+            goal = agent.position
+            if (order := order_tracker.assigned_order.get(agent)) is not None:
+                goal = order.goal
             agent_to_space_time_a_star_search[agent] = _rebuild_a_start_from_last_node(
                 agent=agent,
                 reservation_table=reservation_table,
                 env=env,
-                goal_node=order.goal,
+                goal_node=goal,
                 time_window=time_window,
                 order_tracker=order_tracker,
                 cleanedup_agents=cleanedup_agents,
