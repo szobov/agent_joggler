@@ -374,12 +374,14 @@ def _post_iteration(
     for agent, path in reservation_table.agents_paths.items():
 
         last_time_step = path[-1].time_step
-        for node_index, node in enumerate(reversed(path)):
+        for node_index, node in enumerate(reversed(path), start=1):
             if last_time_step - node.time_step > time_window * 2:
                 break
         else:
             continue
         path_to_send = path[: len(path) - node_index]
+        if not path_to_send:
+            continue
         rest = path[len(path) - node_index :]
 
         agent_path_last_sent_timestep[agent] = path_to_send[-1].time_step
