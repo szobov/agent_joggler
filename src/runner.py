@@ -21,6 +21,7 @@ from src.internal_types import GlobalStart, GlobalStop, ProcessStarted
 from src.logger import setup_logging
 from src.message_transport import (
     MessageBus,
+    MessageBusGlobalStop,
     MessageBusProtocol,
     MessageTopic,
     zmq_proxy_start,
@@ -36,6 +37,7 @@ RUNNER_FUTURE_WAIT_TIMEOUT_SEC = 5.0
 def set_random_seed_if_passed() -> int | None:
     random_seed = os.environ.get("PYTHON_RANDOM_SEED")
     if random_seed is not None:
+        logger.info("Setting random seed", seed=random_seed)
         random.seed(int(random_seed))
 
 
@@ -211,6 +213,9 @@ def _supervise_stop_all_handler(
     for future in done:
         try:
             results[future_process_map[future]] = future.result()
+        except MessageBusGlobalStop:
+            logger.info("Global stop received")
+            continue
         except Exception:
             logger.exception("Exception on stopping all processes")
 
