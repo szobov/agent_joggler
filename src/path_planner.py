@@ -597,7 +597,7 @@ def continue_space_time_a_star_search(
                     )
                 )
                 continue
-
+        min_next_time_step = float("inf")
         for neighbor_node in get_neighbors(env, current_node):
             log = log.bind(neighbor_node=neighbor_node)
             next_time_step = current_node.time_step + 1
@@ -612,14 +612,22 @@ def continue_space_time_a_star_search(
                 if reservation_table.is_node_occupied(
                     current_node,
                     next_time_step,
+                    agent=agent,
                 ):
-                    logger.debug("current node is occupied")
+                    log.info(
+                        "current node is occupied",
+                        next_time_step=next_time_step,
+                    )
                     is_current_node_reserved = True
                     break
                 next_time_step += 1
 
             if is_current_node_reserved:
-                log.debug("current_node is reserved. Abandoning this branch...")
+                log.debug(
+                    "current_node is reserved. Abandoning this branch...",
+                    next_time_step=next_time_step,
+                )
+                min_next_time_step = min(min_next_time_step, next_time_step)
                 continue
             wait_time = next_time_step - current_node.time_step - 1
             assert (
@@ -648,23 +656,29 @@ def continue_space_time_a_star_search(
                     f_score=node_f_score,
                 )
             )
-        if len(open_set) == 0 and reservation_table.is_node_occupied(
-            current_node,
-            current_node.time_step
-            + 1,  # XXX: it's not right to just add 1 here, likely next_time_step should be used
-            agent=agent,
-        ):
-            log.info("start of the path is already occupied by another agent")
-            # TODO: clamp cleanup to a specific length
-            blocked_by_agent, cleanup_until = reservation_table.cleanup_blocked_node(
-                current_node.to_node(), current_node.time_step + 1, agent
+        if len(open_set) == 0:
+            log.info(
+                "open set is empty. Check for a cleanup.",
+                min_next_time_step=min_next_time_step,
             )
-            cleanedup_agents.add(blocked_by_agent)
-            order_tracker.validate_finished_tasks(
-                cleaned_up_time_step=cleanup_until, agent=blocked_by_agent
-            )
+            if reservation_table.is_node_occupied(
+                current_node,
+                min_next_time_step,
+                agent=agent,
+            ):
+                log.info("start of the path is already occupied by another agent")
+                blocked_by_agent, cleanup_until = (
+                    reservation_table.cleanup_blocked_node(
+                        current_node.to_node(), min_next_time_step, agent
+                    )
+                )
+                cleanedup_agents.add(blocked_by_agent)
+                order_tracker.validate_finished_tasks(
+                    cleaned_up_time_step=cleanup_until, agent=blocked_by_agent
+                )
 
-            open_set.add(current_node_with_priority)
+                open_set.add(current_node_with_priority)
+        assert len(open_set), f"{open_set=}"
 
         log = log.try_unbind("neighbor_node")
 
