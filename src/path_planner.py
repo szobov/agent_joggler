@@ -663,13 +663,13 @@ def continue_space_time_a_star_search(
             )
             if reservation_table.is_node_occupied(
                 current_node,
-                min_next_time_step,
+                TimeT(min_next_time_step),
                 agent=agent,
             ):
                 log.info("start of the path is already occupied by another agent")
                 blocked_by_agent, cleanup_until = (
                     reservation_table.cleanup_blocked_node(
-                        current_node.to_node(), min_next_time_step, agent
+                        current_node.to_node(), TimeT(min_next_time_step), agent
                     )
                 )
                 cleanedup_agents.add(blocked_by_agent)
