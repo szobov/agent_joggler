@@ -422,10 +422,17 @@ class MapVisualizer:
                     start = end = item
 
                 dt = self.current_step - step
-                x, y = (
-                    start.x * (1 - dt) + end.x * dt,
-                    start.y * (1 - dt) + end.y * dt,
-                )
+                if (
+                    abs(start.time_step - end.time_step) > 1.0
+                    and end.time_step - step > 1.0
+                ):
+                    x = start.x
+                    y = start.y
+                else:
+                    x, y = (
+                        start.x * (1 - dt) + end.x * dt,
+                        start.y * (1 - dt) + end.y * dt,
+                    )
                 self.draw_object(
                     Coordinate2D(x, y),
                     self.map.configuration.object_sizes[MapObjectType.AGENT.value],
