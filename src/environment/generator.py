@@ -12,7 +12,6 @@ import enum
 import itertools
 import random
 import typing as _t
-from typing import Optional
 
 import structlog
 import pygame
@@ -204,7 +203,7 @@ class MapGenerator:
 
         match border:
             case Border.BOTTOM:
-                y_range = (0, 0)
+                y_range = (0, object_size.y)
             case Border.RIGHT:
                 x_range = (
                     self.map.configuration.width_units - 1 - object_size.x,
@@ -216,7 +215,7 @@ class MapGenerator:
                     self.map.configuration.height_units - 1 - object_size.y,
                 )
             case Border.LEFT:
-                x_range = (0, 0)
+                x_range = (0, object_size.x)
         return (x_range, y_range)
 
     def _generate_clustered_objects(
@@ -461,7 +460,7 @@ def get_message_bus() -> MessageBusProtocol:
 def main(message_bus: MessageBusProtocol):
     map_configuration = MapConfiguration(
         width_units=18,
-        height_units=6,
+        height_units=12,
         object_sizes={
             MapObjectType.MAINTENANCE_AREA.value: Coordinate2D(3, 3),
             MapObjectType.STACK.value: Coordinate2D(1, 1),
@@ -470,11 +469,11 @@ def main(message_bus: MessageBusProtocol):
             MapObjectType.AGENT.value: Coordinate2D(1, 1),
         },
         object_numbers={
-            MapObjectType.MAINTENANCE_AREA.value: 1,
-            MapObjectType.STACK.value: 4,
+            MapObjectType.MAINTENANCE_AREA.value: 2,
+            MapObjectType.STACK.value: 12,
             MapObjectType.PICKUP_STATION.value: 3,
             MapObjectType.PILLAR.value: 8,
-            MapObjectType.AGENT.value: 4,
+            MapObjectType.AGENT.value: 12,
         },
     )
     map_generator = MapGenerator(Map(map_configuration))
