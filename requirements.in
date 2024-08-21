@@ -3,3 +3,6 @@ rich
 structlog
 colorama
 pygame
+platformdirs
+pyzmq
+dataclasses_avroschema
