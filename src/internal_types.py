@@ -232,6 +232,7 @@ class ReservationTable:
         self, blocked_node: Coordinate2D, time_step: TimeT, blocked_agent: Agent
     ) -> tuple[Agent, TimeT]:
         key = (blocked_node, blocked_node, time_step)
+
         blocked_by_agent = self._reservation_table.get(key)
         assert blocked_by_agent is not None
         assert blocked_by_agent.agent_id != blocked_agent.agent_id
@@ -268,6 +269,11 @@ class ReservationTable:
         blocked_by_agent_to_drop = blocked_by_agent_path[
             len(blocked_by_agent_path) - dropped_index :
         ]
+        logger.info(
+            "identified blocking path",
+            blocked_by_agent_to_drop=blocked_by_agent_to_drop,
+            updated_blocked_by_agent_path=updated_blocked_by_agent_path,
+        )
 
         # TODO: I must cleanup all parts of the path in reservation table. N1 -> N2, N1 <- N2,
         self._cleanup_path(blocked_by_agent_to_drop)
