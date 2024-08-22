@@ -2,10 +2,10 @@ from collections.abc import Sequence
 
 from rich.traceback import install
 
-from src.path_planning import path_planner
 from src.environment import generator
 from src.logger import setup_logging
 from src.orders import order_planner
+from src.path_planning import process as path_planning
 from src.runner import (
     Process,
     get_process_executor,
@@ -22,7 +22,7 @@ setup_logging(name="root")
 def main():
     processes: Sequence[Process] = (
         generator.get_process(),
-        path_planner.get_process(),
+        path_planning.get_process(),
         order_planner.get_process(),
     )
     with get_process_executor() as executor:

@@ -1,43 +1,24 @@
-from collections import defaultdict, deque
 import dataclasses
-import typing as _t
 import itertools
+import typing as _t
 
 import structlog
-from structlog.typing import WrappedLogger
-
-from ..runner import Process, ProcessFinishPolicy
-
-from ..message_transport import (
-    MessageBusProtocol,
-    MessageTopic,
-)
 
 from ..internal_types import (
     Agent,
     AgentIdT,
     AgentPath,
-    Environment,
     Coordinate2D,
     Coordinate2DWithTime,
-    OrderType,
-    Order,
+    Environment,
     OrderFinished,
-    Orders,
-    TimeT,
-    Map,
-    NodeState,
-    MapObjectType,
-    ReservationTable,
     PriorityQueueItem,
+    ReservationTable,
+    TimeT,
 )
-
-from ..path_planning.common_a_star_utils import (
-    get_neighbors,
-    edge_cost,
-    OpenSet,
-)
-
+from ..message_transport import MessageBusProtocol, MessageTopic
+from ..path_planning.common_a_star_utils import OpenSet, edge_cost, get_neighbors
+from ..path_planning.order_tracker import OrderTracker
 from ..path_planning.reverse_resumable_a_star import (
     initialize_reverse_resumable_a_star,
     resume_rra,
@@ -111,110 +92,6 @@ def _need_wait(
         time_step,
     )
     return is_edge_occpuied or is_next_node_occupied
-
-
-@dataclasses.dataclass
-class OrderTracker:
-    not_assigned_orders: deque[Order] = dataclasses.field(default_factory=deque)
-    assigned_order: dict[Agent, Order] = dataclasses.field(default_factory=dict)
-    finished_orders: dict[Agent, deque[tuple[TimeT, Order]]] = dataclasses.field(
-        default_factory=lambda: defaultdict(deque)
-    )
-    logger: WrappedLogger = dataclasses.field(
-        default_factory=lambda: logger.bind(isinstance="order_tracker")
-    )
-
-    def add_orders(self, orders: Orders):
-        self.logger.info("add orders", orders=orders)
-        for order in orders.orders:
-            self.not_assigned_orders.append(order)
-
-    def iterate_finished_orders(
-        self, agent: Agent, time_step: TimeT
-    ) -> _t.Iterator[Order]:
-        for time_stamp, _ in self.finished_orders[agent].copy():
-            if time_stamp < time_step:
-                yield self.finished_orders[agent].popleft()[1]
-            else:
-                break
-
-    def assign_order(self, agent: Agent) -> Coordinate2D:
-        log = self.logger.bind(agent=agent)
-        log.info("assign order")
-        assert agent not in self.assigned_order
-        if len(self.not_assigned_orders) == 0:
-            # If we have no assigned tasks, return robot to the parking
-            # position
-            log.info("No orders available, send home")
-            return agent.position
-        if (
-            self.finished_orders[agent]
-            and self.finished_orders[agent][0] != OrderType.DELIVERY
-        ):
-            _, prev_order = self.finished_orders[agent][0]
-            log.info("searching for next delivery order", prev_order=prev_order)
-            accumulator: list[Order] = []
-            next_order = None
-            while self.not_assigned_orders:
-                next_order = self.not_assigned_orders.popleft()
-                if (
-                    next_order.order_type == OrderType.DELIVERY
-                    and next_order.pallet_id != prev_order.pallet_id
-                ):
-                    accumulator.append(next_order)
-                else:
-                    log.info(
-                        "Found next delivery order",
-                        prev_order=prev_order,
-                        next_order=next_order,
-                    )
-                    self.not_assigned_orders.extendleft(accumulator)
-                    break
-        else:
-            next_order = self.not_assigned_orders.popleft()
-            log.info("next order", next_order=next_order)
-        assert next_order is not None
-        self.assigned_order[agent] = next_order
-        return next_order.goal
-
-    def validate_finished_tasks(self, cleaned_up_time_step: TimeT, agent: Agent):
-
-        for time_stamp, task in reversed(self.finished_orders[agent].copy()):
-            if time_stamp < cleaned_up_time_step:
-                return
-            _, task = self.finished_orders[agent].pop()
-            self.not_assigned_orders.appendleft(task)
-
-    def agent_finished_task(self, agent: Agent, time_step: TimeT):
-        self.logger.info("finished order", agent=agent, time_step=time_step)
-        task = self.assigned_order.pop(agent)
-        self.finished_orders[agent].append((time_step, task))
-
-
-def _convert_map_to_planner_env(map: Map) -> Environment:
-    x_dim = map.configuration.width_units
-    y_dim = map.configuration.height_units
-    agents = [
-        Agent(agent_id=obj.object_id, position=obj.coordinates)
-        for obj in filter(
-            lambda object: object.object_type == MapObjectType.AGENT, map.objects
-        )
-    ]
-
-    grid = [[NodeState.FREE] * y_dim for _ in range(x_dim)]
-    for object in map.objects:
-        if object.object_type == MapObjectType.PILLAR:
-            grid[object.coordinates.x][object.coordinates.y] = NodeState.BLOCKED
-    return Environment(x_dim=x_dim, y_dim=y_dim, grid=grid, agents=agents)
-
-
-def initialize_enviornment(message_bus: MessageBusProtocol) -> Environment:
-    logger.info("waiting map")
-    map = message_bus.get_message(MessageTopic.MAP, wait=True)
-    logger.info("map received")
-    assert map
-    logger.info("converting map to planner environment")
-    return _convert_map_to_planner_env(map)
 
 
 def _windowed_hierarhical_cooperative_a_start_iteration(
@@ -680,26 +557,3 @@ def continue_space_time_a_star_search(
         assert len(open_set), f"{open_set=}"
 
         log = log.try_unbind("neighbor_node")
-
-
-def path_planning_process(message_bus: MessageBusProtocol) -> None:
-    TIME_WINDOW = 8
-    logger.info("time window is set", time_window=TIME_WINDOW)
-    env = initialize_enviornment(message_bus)
-    reservation_table = make_reservation_table(time_window=TIME_WINDOW)
-    windowed_hierarhical_cooperative_a_start(
-        message_bus, env, TIME_WINDOW, reservation_table
-    )
-
-
-def get_process() -> Process:
-    return Process(
-        name="path_planner",
-        subsribe_topics=(
-            MessageTopic.MAP,
-            MessageTopic.ORDERS,
-        ),
-        publish_topics=(MessageTopic.AGENT_PATH, MessageTopic.ORDER_FINISHED),
-        process_function=path_planning_process,
-        process_finish_policy=ProcessFinishPolicy.STOP_ALL,
-    )
