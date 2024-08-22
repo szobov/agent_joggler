@@ -2,7 +2,7 @@ from collections.abc import Sequence
 
 from rich.traceback import install
 
-from src import path_planner
+from src.path_planning import path_planner
 from src.environment import generator
 from src.logger import setup_logging
 from src.orders import order_planner

@@ -3,7 +3,7 @@ import math
 import typing as _t
 import dataclasses
 
-from .internal_types import (
+from ..internal_types import (
     Environment,
     Heuristic,
     Coordinate2D,

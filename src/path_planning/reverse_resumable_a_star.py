@@ -1,13 +1,13 @@
 import typing as _t
 
-from .internal_types import (
+from ..internal_types import (
     Environment,
     Heuristic,
     Coordinate2D,
     Coordinate2DWithTime,
     PriorityQueueItem,
 )
-from .common_a_star_utils import (
+from ..path_planning.common_a_star_utils import (
     heuristic,
     get_neighbors,
     edge_cost,

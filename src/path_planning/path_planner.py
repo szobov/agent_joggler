@@ -6,14 +6,14 @@ import itertools
 import structlog
 from structlog.typing import WrappedLogger
 
-from src.runner import Process, ProcessFinishPolicy
+from ..runner import Process, ProcessFinishPolicy
 
-from .message_transport import (
+from ..message_transport import (
     MessageBusProtocol,
     MessageTopic,
 )
 
-from .internal_types import (
+from ..internal_types import (
     Agent,
     AgentIdT,
     AgentPath,
@@ -32,13 +32,13 @@ from .internal_types import (
     PriorityQueueItem,
 )
 
-from .common_a_star_utils import (
+from ..path_planning.common_a_star_utils import (
     get_neighbors,
     edge_cost,
     OpenSet,
 )
 
-from .reverse_resumable_a_star import (
+from ..path_planning.reverse_resumable_a_star import (
     initialize_reverse_resumable_a_star,
     resume_rra,
 )
@@ -371,11 +371,20 @@ def _post_iteration(
     agent_id_to_goal: dict[AgentIdT, Coordinate2D],
     cleanedup_agents: set[Agent],
 ):
+
+    last_time_steps = [
+        path[-1].time_step for path in reservation_table.agents_paths.values() if path
+    ]
+    min_last_time_step = min(last_time_steps)
+
     for agent, path in reservation_table.agents_paths.items():
 
         last_time_step = path[-1].time_step
         for node_index, node in enumerate(reversed(path), start=1):
-            if last_time_step - node.time_step > time_window * 2:
+            if (
+                last_time_step - node.time_step > time_window * 2
+                and min_last_time_step - node.time_step > time_window * 2
+            ):
                 break
         else:
             continue
@@ -430,17 +439,6 @@ def _post_iteration(
                 reservation_table=reservation_table,
             )
             break
-
-        # XXX: I send the path here, and when I did it, shouldn't I
-        #      cleanup this path from the reservation table?
-        #      I can also try to save "last_send_timestep" and cleanup
-        #      nodes that are older than this timestep.
-        #
-        # XXX: should I cleanup reservation_table right here?
-        #
-        # XXX: current issue: here I always send the whole path, so I clearly need to do two things:
-        #      1. Cleanup reservation table
-        #      2. Track "current time" in order planner and visualizer, since I must not move robot back in time.
 
 
 def windowed_hierarhical_cooperative_a_start(
@@ -667,6 +665,7 @@ def continue_space_time_a_star_search(
                 agent=agent,
             ):
                 log.info("start of the path is already occupied by another agent")
+
                 blocked_by_agent, cleanup_until = (
                     reservation_table.cleanup_blocked_node(
                         current_node.to_node(), TimeT(min_next_time_step), agent
