@@ -1,14 +1,25 @@
 import structlog
 
-from ..internal_types import Agent, Environment, Map, MapObjectType, NodeState
+from ..internal_types import (
+    Agent,
+    Environment,
+    Map,
+    MapObjectType,
+    NodeState,
+    ReservationTable,
+    TimeT,
+)
 from ..message_transport import MessageBusProtocol, MessageTopic
 from ..path_planning.path_planner import (
-    make_reservation_table,
     windowed_hierarhical_cooperative_a_start,
 )
 from ..runner import Process, ProcessFinishPolicy
 
 logger = structlog.getLogger(__name__)
+
+
+def _make_reservation_table(time_window: TimeT) -> ReservationTable:
+    return ReservationTable(time_window=time_window)
 
 
 def _convert_map_to_planner_env(map: Map) -> Environment:
@@ -28,7 +39,7 @@ def _convert_map_to_planner_env(map: Map) -> Environment:
     return Environment(x_dim=x_dim, y_dim=y_dim, grid=grid, agents=agents)
 
 
-def initialize_enviornment(message_bus: MessageBusProtocol) -> Environment:
+def _initialize_enviornment(message_bus: MessageBusProtocol) -> Environment:
     logger.info("waiting map")
     map = message_bus.get_message(MessageTopic.MAP, wait=True)
     logger.info("map received")
@@ -40,8 +51,8 @@ def initialize_enviornment(message_bus: MessageBusProtocol) -> Environment:
 def path_planning_process(message_bus: MessageBusProtocol) -> None:
     TIME_WINDOW = 8
     logger.info("time window is set", time_window=TIME_WINDOW)
-    env = initialize_enviornment(message_bus)
-    reservation_table = make_reservation_table(time_window=TIME_WINDOW)
+    env = _initialize_enviornment(message_bus)
+    reservation_table = _make_reservation_table(time_window=TIME_WINDOW)
     windowed_hierarhical_cooperative_a_start(
         message_bus, env, TIME_WINDOW, reservation_table
     )
