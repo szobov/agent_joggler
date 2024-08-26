@@ -157,9 +157,12 @@ class ReservationTable:
             node = node.to_node()
         assert isinstance(node, Coordinate2D)
         key = (node, node, time_step)
+        is_occupied = key in self._reservation_table
         if not agent:
-            return key in self._reservation_table
-        return key in self._reservation_table and self._reservation_table[key] != agent
+            return is_occupied
+        return (
+            is_occupied and self._reservation_table[key] != agent
+        )  # by a different agent
 
     def is_edge_occupied(
         self,
