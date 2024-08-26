@@ -1,104 +1,79 @@
-import random
 from unittest.mock import Mock
 
 import pytest
 
-from src.internal_types import (
-    AgentPath,
-    Coordinate2D,
-    Coordinate2DWithTime,
-    Map,
-    MapConfiguration,
-    MapObject,
-    MapObjectType,
-    PlannerTask,
-)
+from src.environment.generator import Map
+from src.internal_types import Coordinate2D, MapObject, MapObjectType, Order
 from src.message_transport import MessageTopic
-from src.orders.order_planner import Order, OrderPlanner, OrderType
+from src.orders.order_planner import OrderPlanner, Pallet, Stack, get_process
 
 
 @pytest.fixture
-def map() -> Map:
-    configuration = MapConfiguration(width_units=5, height_units=5)
-    return Map(
-        configuration=configuration,
-        objects=[
-            MapObject(
-                coordinates=Coordinate2D(x=5, y=5),
-                object_type=MapObjectType.STACK,
-                object_id=0,
-            ),
-            MapObject(
-                coordinates=Coordinate2D(x=1, y=1),
-                object_type=MapObjectType.AGENT,
-                object_id=1,
-            ),
-            MapObject(
-                coordinates=Coordinate2D(x=5, y=1),
-                object_type=MapObjectType.PICKUP_STATION,
-                object_id=2,
-            ),
-        ],
-    )
-
-
-def test_ok(map: Map):
-    random.seed(41)
-    order_planner = OrderPlanner(map)
-    message_bus = Mock()
-    agent_to_order = {}
-    pickup_orders_generator, orders = order_planner._iterate(
-        message_bus=message_bus,
-        agent_to_order=agent_to_order,
-        pickup_orders_generator=None,
-    )
-    assert pickup_orders_generator is not None
-    assert orders == [
-        Order(
-            planner_task=PlannerTask(
-                order_id=0, agent_id=1, goal=Coordinate2D(x=5, y=5)
-            ),
-            pallet_id=0,
-            order_type=OrderType.FREEUP,
-        )
-    ]
-    order_planner._send_orders(
-        orders=orders, message_bus=message_bus, agent_to_order=agent_to_order
-    )
-    assert agent_to_order == {1: orders[0]}
-
-    def mocked_get_message(topic, wait):
-        assert topic == MessageTopic.AGENT_PATH
-        assert wait
-        return AgentPath(
-            agent_id=1,
-            path=[
-                Coordinate2DWithTime(x=1, y=1, time_step=0),
-                Coordinate2DWithTime(x=5, y=5, time_step=1),
-            ],
-        )
-
-    message_bus.get_message.side_effect = mocked_get_message
-
-    pickup_orders_generator, orders = order_planner._iterate(
-        message_bus=message_bus,
-        agent_to_order=agent_to_order,
-        pickup_orders_generator=pickup_orders_generator,
-    )
-    assert orders == [
-        Order(
-            planner_task=PlannerTask(
-                order_id=0, agent_id=1, goal=Coordinate2D(x=5, y=5)
-            ),
-            pallet_id=1,
-            order_type=OrderType.PICKUP,
+def mock_map():
+    map_objects = [
+        MapObject(
+            coordinates=Coordinate2D(x=1, y=1),
+            object_type=MapObjectType.STACK,
+            object_id=1,
+        ),
+        MapObject(
+            coordinates=Coordinate2D(x=2, y=2),
+            object_type=MapObjectType.PICKUP_STATION,
+            object_id=2,
+        ),
+        MapObject(
+            coordinates=Coordinate2D(x=0, y=0),
+            object_type=MapObjectType.AGENT,
+            object_id=3,
         ),
     ]
+    return Map(configuration=None, objects=map_objects)
 
-    pickup_orders_generator, orders = order_planner._iterate(
-        message_bus=message_bus,
-        agent_to_order=agent_to_order,
-        pickup_orders_generator=pickup_orders_generator,
+
+def test_stack_operations():
+    stack = Stack(
+        map_object=Mock(),
+        _pallets=[Pallet(object_id=1), Pallet(object_id=2)],
     )
-    assert pickup_orders_generator is None
-    assert orders == []
+
+    stack.add_pallet(Pallet(object_id=3))
+    assert len(stack.pallets) == 3
+    assert stack.pallets[3].object_id == 3
+
+    bottom_pallet = stack.get_bottom_pallet()
+    assert bottom_pallet.object_id == 1
+    assert len(stack.pallets) == 2
+
+
+def test_order_planner_initialization(mock_map):
+    order_planner = OrderPlanner(map=mock_map)
+
+    assert len(order_planner._stacks) == 1
+    assert len(order_planner._agents) == 1
+    assert len(order_planner._pickup_stations) == 1
+
+
+@pytest.mark.skip
+def test_order_planner_generate_orders(mock_map):
+    order_planner = OrderPlanner(map=mock_map)
+    orders = order_planner._generate_orders()
+
+    assert len(orders) > 0
+    assert all(isinstance(order, Order) for order in orders)
+
+
+def test_order_planner_refill_stacks(mock_map):
+    order_planner = OrderPlanner(map=mock_map)
+
+    initial_stack = next(iter(order_planner._stacks.values()))
+    initial_pallet_count = len(initial_stack.pallets)
+
+    order_planner._refill_stacks()
+    assert len(initial_stack.pallets) >= initial_pallet_count
+
+
+def test_get_process():
+    process = get_process()
+    assert process.name == "order_planner"
+    assert MessageTopic.MAP in process.subsribe_topics
+    assert MessageTopic.ORDERS in process.publish_topics

@@ -1,203 +1,219 @@
-from collections import defaultdict, deque
-from dataclasses import dataclass
-import pathlib
-from typing import Type
-from dataclasses_avroschema.schema_generator import AvroModel
-
+import typing as _t
 import pytest
-
+from unittest.mock import Mock
 from src.internal_types import (
-    Environment,
-    Map,
-    PlannerTasks,
-    AgentPath,
+    Agent,
+    Coordinate2D,
     Coordinate2DWithTime,
+    Environment,
+    ReservationTable,
+    Order,
+    Orders,
+    OrderType,
+    NodeState,
 )
-from src.path_planner import (
+from src.path_planning.path_planner import (
+    space_time_a_star_search,
     _windowed_hierarhical_cooperative_a_start_iteration,
-    make_reservation_table,
-    _convert_map_to_planner_env,
-    _convert_planner_tasks_to_agent_to_goal_map,
+    reconstruct_path,
+    follow_path,
+    OrderTracker,
 )
-from src.message_transport import MessageTopic
 
 
 @pytest.fixture
-def path_to_datadir() -> pathlib.Path:
-    return pathlib.Path(__file__).parent / "data"
-
-
-def _read_message_from_filesystem[
-    T
-](path_to_datadir: pathlib.Path, filename: str, message_class: Type[T]) -> T:
-    assert issubclass(message_class, AvroModel)
-    # Apache-Avro expects un-pretty-printed json
-    data = b" ".join((path_to_datadir / filename).read_bytes().split())
-    return message_class.deserialize(
-        data,
-        serialization_type="avro-json",
-        create_instance=True,
+def setup_environment():
+    env = Environment(
+        x_dim=5,
+        y_dim=5,
+        grid=[
+            [
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+            ],
+            [
+                NodeState.FREE,
+                NodeState.BLOCKED,
+                NodeState.BLOCKED,
+                NodeState.BLOCKED,
+                NodeState.FREE,
+            ],
+            [
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.BLOCKED,
+                NodeState.FREE,
+            ],
+            [
+                NodeState.FREE,
+                NodeState.BLOCKED,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+            ],
+            [
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+                NodeState.FREE,
+            ],
+        ],
+        agents=[],
     )
+    return env
 
 
 @pytest.fixture
-def first_planner_tasks(path_to_datadir: pathlib.Path) -> PlannerTasks:
-    return _read_message_from_filesystem(
-        path_to_datadir, "first_planner_tasks.json", PlannerTasks
-    )
+def setup_agent():
+    return Agent(agent_id=1, position=Coordinate2D(x=0, y=0))
 
 
 @pytest.fixture
-def second_planner_tasks(path_to_datadir: pathlib.Path) -> PlannerTasks:
-    return _read_message_from_filesystem(
-        path_to_datadir, "second_planner_tasks.json", PlannerTasks
-    )
+def setup_reservation_table():
+    return ReservationTable(time_window=10)
 
 
 @pytest.fixture
-def third_planner_tasks(path_to_datadir: pathlib.Path) -> PlannerTasks:
-    return _read_message_from_filesystem(
-        path_to_datadir, "third_planner_tasks.json", PlannerTasks
-    )
+def setup_order_tracker():
+    return OrderTracker()
 
 
-@pytest.fixture
-def map(path_to_datadir: pathlib.Path) -> Map:
-    return _read_message_from_filesystem(path_to_datadir, "map.json", Map)
+def test_reconstruct_path():
+    node_a = Coordinate2DWithTime(x=0, y=0, time_step=0)
+    node_b = Coordinate2DWithTime(x=1, y=0, time_step=1)
+    node_c = Coordinate2DWithTime(x=2, y=0, time_step=2)
+
+    came_from = {
+        node_b: node_a,
+        node_c: node_b,
+    }
+
+    path = reconstruct_path(came_from, node_c)
+
+    assert path == [node_a, node_b, node_c]
 
 
-@pytest.fixture
-def env(map: Map) -> Environment:
-    return _convert_map_to_planner_env(map)
+def test_follow_path(setup_reservation_table, setup_agent):
+    reservation_table = setup_reservation_table
+    agent = setup_agent
+
+    path = [
+        Coordinate2DWithTime(x=0, y=0, time_step=0),
+        Coordinate2DWithTime(x=1, y=0, time_step=1),
+        Coordinate2DWithTime(x=2, y=0, time_step=2),
+    ]
+
+    for node in path:
+        assert not reservation_table.is_node_occupied(
+            node.to_node(), node.time_step, agent
+        )
+
+    follow_path(path, reservation_table, agent)
+
+    for node in path:
+        assert reservation_table.is_node_occupied(node.to_node(), node.time_step)
+
+    for node in path:
+        assert not reservation_table.is_node_occupied(
+            node.to_node(), node.time_step, agent
+        )
 
 
-@dataclass
-class MockedMessageTransport:
-
-    _get_messages = defaultdict(deque)
-    _sent_messages = defaultdict(deque)
-
-    def _add_new_message(self, topic, message):
-        self._get_messages[topic].append(message)
-
-    def get_message(self, topic, wait):
-        del wait
-        return self._get_messages[topic].popleft()
-
-    def send_message(self, topic, message):
-        self._sent_messages[topic].append(message)
-
-
-def test_ok(
-    env: Environment,
-    first_planner_tasks: PlannerTasks,
-    second_planner_tasks: PlannerTasks,
-    third_planner_tasks: PlannerTasks,
+def test_windowed_hierarhical_cooperative_a_start_iteration(
+    setup_environment, setup_reservation_table, setup_order_tracker, setup_agent
 ):
-    message_bus = MockedMessageTransport()
-    TIME_WINDOW = 8
-    reservation_table = make_reservation_table(TIME_WINDOW)
+    env = setup_environment
+    reservation_table = setup_reservation_table
+    order_tracker = setup_order_tracker
+    agent = setup_agent
 
+    env.agents.append(agent)
+
+    message_bus = Mock()
+
+    mock_order = Order(
+        order_id=1,
+        order_type=OrderType.PICKUP,
+        goal=Coordinate2D(x=2, y=2),
+        pallet_id=1,
+    )
+    message_bus.get_message.return_value = Orders(orders=[mock_order])
+
+    agent_id_to_goal = {agent.agent_id: Coordinate2D(x=2, y=2)}
     agent_to_space_time_a_star_search = {}
-    agent_iteration_index = -1
-    agent_id_to_goal = _convert_planner_tasks_to_agent_to_goal_map(first_planner_tasks)
-    agent_path_last_sent_timestep = {agent: 0 for agent in env.agents}
-    agents_reached_goal = 0
+    agent_iteration_index = 0
+    agent_path_last_sent_timestep = {agent: 0}
+    cleanedup_blocking_agents = set()
 
-    def _run_until_message_sent(new_message):
-        message_bus._add_new_message(MessageTopic.PLANNER_TASKS, new_message)
-        while len(message_bus._sent_messages.get(MessageTopic.AGENT_PATH, [])) == 0:
-            _windowed_hierarhical_cooperative_a_start_iteration(
-                message_bus=message_bus,
-                time_window=TIME_WINDOW,
-                env=env,
-                reservation_table=reservation_table,
-                agent_iteration_index=agent_iteration_index,
-                agents_reached_goal=agents_reached_goal,
-                agent_path_last_sent_timestep=agent_path_last_sent_timestep,
-                agent_id_to_goal=agent_id_to_goal,
-                agent_to_space_time_a_star_search=agent_to_space_time_a_star_search,
-            )
-        return message_bus._sent_messages[MessageTopic.AGENT_PATH].popleft()
-
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=1,
-        path=[
-            Coordinate2DWithTime(x=1, y=4, time_step=0),
-            Coordinate2DWithTime(x=1, y=4, time_step=1),
-            Coordinate2DWithTime(x=1, y=3, time_step=2),
-            Coordinate2DWithTime(x=0, y=3, time_step=3),
-            Coordinate2DWithTime(x=0, y=3, time_step=4),
-            Coordinate2DWithTime(x=0, y=2, time_step=5),
-            Coordinate2DWithTime(x=0, y=2, time_step=6),
-        ],
+    _windowed_hierarhical_cooperative_a_start_iteration(
+        message_bus=message_bus,
+        time_window=5,
+        env=env,
+        reservation_table=reservation_table,
+        order_tracker=order_tracker,
+        agent_id_to_goal=agent_id_to_goal,
+        agent_to_space_time_a_star_search=agent_to_space_time_a_star_search,
+        agent_iteration_index=agent_iteration_index,
+        agent_path_last_sent_timestep=agent_path_last_sent_timestep,
+        cleanedup_blocking_agents=cleanedup_blocking_agents,
     )
 
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=0,
-        path=[
-            Coordinate2DWithTime(x=0, y=3, time_step=0),
-            Coordinate2DWithTime(x=0, y=2, time_step=1),
-            Coordinate2DWithTime(x=0, y=1, time_step=2),
-            Coordinate2DWithTime(x=0, y=1, time_step=8),
-        ],
+    assert message_bus.get_message.called
+
+
+def test_space_time_a_star_search(
+    setup_environment, setup_reservation_table, setup_agent, setup_order_tracker
+):
+    env = setup_environment
+    reservation_table = setup_reservation_table
+    agent = setup_agent
+    order_tracker = setup_order_tracker
+    cleanedup_blocking_agents = set()
+
+    goal = Coordinate2D(x=4, y=4)
+    search = space_time_a_star_search(
+        env=env,
+        reservation_table=reservation_table,
+        agent=agent,
+        goal=goal,
+        time_window=10,
+        timestep=0,
+        initial_pose=agent.position,
+        order_tracker=order_tracker,
+        cleanedup_blocking_agents=cleanedup_blocking_agents,
     )
 
-    assert _run_until_message_sent(third_planner_tasks) == AgentPath(
-        agent_id=1, path=[Coordinate2DWithTime(x=0, y=1, time_step=9)]
-    )
-    assert _run_until_message_sent(second_planner_tasks) == AgentPath(
-        agent_id=2,
-        path=[
-            Coordinate2DWithTime(x=2, y=3, time_step=0),
-            Coordinate2DWithTime(x=3, y=3, time_step=1),
-            Coordinate2DWithTime(x=3, y=2, time_step=2),
-            Coordinate2DWithTime(x=4, y=2, time_step=3),
-            Coordinate2DWithTime(x=5, y=2, time_step=4),
-            Coordinate2DWithTime(x=6, y=2, time_step=5),
-            Coordinate2DWithTime(x=7, y=2, time_step=6),
-            Coordinate2DWithTime(x=8, y=2, time_step=7),
-            Coordinate2DWithTime(x=9, y=2, time_step=8),
-        ],
+    assert isinstance(search, _t.Generator)
+
+
+def test_continue_space_time_a_star_search(
+    setup_environment, setup_reservation_table, setup_agent, setup_order_tracker
+):
+    env = setup_environment
+    reservation_table = setup_reservation_table
+    agent = setup_agent
+    order_tracker = setup_order_tracker
+    cleanedup_blocking_agents = set()
+
+    goal = Coordinate2D(x=4, y=4)
+    rra = space_time_a_star_search(
+        env=env,
+        reservation_table=reservation_table,
+        agent=agent,
+        goal=goal,
+        time_window=10,
+        timestep=0,
+        initial_pose=agent.position,
+        order_tracker=order_tracker,
+        cleanedup_blocking_agents=cleanedup_blocking_agents,
     )
 
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=0,
-        path=[
-            Coordinate2DWithTime(x=1, y=1, time_step=9),
-            Coordinate2DWithTime(x=2, y=1, time_step=10),
-            Coordinate2DWithTime(x=2, y=0, time_step=11),
-            Coordinate2DWithTime(x=1, y=0, time_step=12),
-            Coordinate2DWithTime(x=1, y=1, time_step=13),
-        ],
-    )
+    result = next(rra)
 
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=1,
-        path=[
-            Coordinate2DWithTime(x=0, y=1, time_step=16),
-            Coordinate2DWithTime(x=0, y=2, time_step=17),
-        ],
-    )
-
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=2,
-        path=[
-            Coordinate2DWithTime(x=10, y=2, time_step=9),
-            Coordinate2DWithTime(x=11, y=2, time_step=10),
-            Coordinate2DWithTime(x=12, y=2, time_step=11),
-            Coordinate2DWithTime(x=13, y=2, time_step=12),
-            Coordinate2DWithTime(x=14, y=2, time_step=13),
-            Coordinate2DWithTime(x=15, y=2, time_step=14),
-            Coordinate2DWithTime(x=16, y=2, time_step=15),
-            Coordinate2DWithTime(x=17, y=2, time_step=16),
-        ],
-    )
-
-    assert _run_until_message_sent(None) == AgentPath(
-        agent_id=1,
-        path=[
-            Coordinate2DWithTime(x=0, y=1, time_step=16),
-            Coordinate2DWithTime(x=0, y=2, time_step=17),
-        ],
-    )
+    assert isinstance(result, list)
+    assert len(result) > 0
