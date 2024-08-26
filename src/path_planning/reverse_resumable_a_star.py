@@ -49,7 +49,7 @@ def resume_reverse_a_star(
     closed_set: set[Coordinate2D] = set()
     while True:
         search_node: Coordinate2D = yield
-        assert isinstance(search_node, Coordinate2D)
+        assert isinstance(search_node, Coordinate2D), f"{search_node=}"
 
         if search_node in closed_set:
             yield g_score[search_node]
@@ -91,7 +91,8 @@ def resume_reverse_a_star(
 # TODO: likely it makes sense to use a clojure and provide a similar interface as Manhattan
 # distance heuristic, so we can call it `abstract_distance`
 def resume_rra(
-    rra: _t.Generator[float | None, Coordinate2D, None], node: Coordinate2D
+    rra: _t.Generator[float | None, Coordinate2D, None],
+    node: Coordinate2D | Coordinate2DWithTime,
 ) -> float:
     if isinstance(node, Coordinate2DWithTime):
         node = node.to_node()
