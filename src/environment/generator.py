@@ -114,7 +114,9 @@ class MapGenerator:
             range_y=range_y,
             ignore_object_overlap=ignore_object_overlap,
         )
-        while overlap:
+        MAX_ATTEMPTS = 30
+        attempt = iter(range(1, MAX_ATTEMPTS + 1))
+        while overlap and next(attempt, False):
             log.debug("Attempt to place an object on map")
             coords = random_2d_coords(range_x, range_y)
             coords = Coordinate2D(
@@ -159,7 +161,9 @@ class MapGenerator:
                 self.map.objects.append(possible_object)
                 return possible_object
             log = log.unbind("coords")
-        assert False
+        assert (
+            False
+        ), f"Unable to place an object in {MAX_ATTEMPTS}. Most likely an unlucky random.seed"
 
     def _generate_agent(self, agent_id: int):
         maintenance_area = next(
