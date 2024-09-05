@@ -1,19 +1,48 @@
-from collections import defaultdict
 import bisect
+import json
+import os
+from collections import defaultdict
+from functools import lru_cache
 
 import pygame
+from websockets.sync.client import ClientConnection, connect
 
-from ..internal_types import (
-    Coordinate2D,
-    Map,
-    MapObjectType,
-)
+from ..internal_types import Coordinate2D, Map, MapObjectType
 from ..message_transport import MessageBusProtocol, MessageTopic
+
+
+@lru_cache(maxsize=1)
+def get_socket() -> ClientConnection:
+    return connect("ws://localhost:5555/ws")
+
+
+@lru_cache(maxsize=1)
+def is_websocket_enabled() -> bool:
+    return bool(os.getenv("WEB_SOCKET_ENABLED"))
+
+
+def websocket_close():
+    if not is_websocket_enabled():
+        return
+    get_socket().close()
+
+
+def websocket_send_message(message):
+    if not is_websocket_enabled():
+        return
+    get_socket().send(json.dumps(message))
+
+
+def init_pygame():
+    if is_websocket_enabled():
+        PYGAME_HEADLESS_MODE = "dummy"
+        os.environ["SDL_VIDEODRIVER"] = PYGAME_HEADLESS_MODE
+    pygame.init()
 
 
 class MapVisualizer:
     def __init__(self, map: Map):
-        pygame.init()
+        init_pygame()
         self.size = self.width, self.height = 800, 600
         self.screen = pygame.display.set_mode(self.size)
         pygame.display.set_caption("Warehouse Generator")
@@ -38,7 +67,6 @@ class MapVisualizer:
             self.width / self.map.configuration.width_units,
             self.height / self.map.configuration.height_units,
         )
-
         self.clock = pygame.time.Clock()
 
     def run(self, message_bus: MessageBusProtocol):
@@ -48,7 +76,11 @@ class MapVisualizer:
                     pygame.quit()
                     return
 
-            self.screen.fill((0, 0, 0))  # Clear screen with black background
+            websocket_send_message(
+                {"type": "screen_size", "width": self.width, "height": self.height},
+            )
+            websocket_send_message({"type": "clear_screen"})
+            self.screen.fill((0, 0, 0))
             self.draw_grid()
             for object in filter(
                 lambda o: o.object_type != MapObjectType.AGENT, self.map.objects
@@ -62,8 +94,12 @@ class MapVisualizer:
             self.draw_agents(message_bus=message_bus)
             pygame.display.flip()  # Update the full display Surface to the screen
             self.clock.tick(60)  # Limit to 60 frames per second
+        websocket_close()
 
     def draw_grid(self):
+        websocket_send_message(
+            {"type": "draw_grid", "unit_pixel_size": self.unit_pixel_size}
+        )
         for index, x in enumerate(range(0, self.width, int(self.unit_pixel_size))):
             pygame.draw.line(
                 self.screen, pygame.Color("white"), (x, 0), (x, self.height), 2
@@ -96,6 +132,15 @@ class MapVisualizer:
         self.draw_text(
             str(object_id), rect.centerx, rect.centery, pygame.Color("white")
         )
+        message = {
+            "type": "draw_object",
+            "coordinates": {"x": object.x, "y": object.y},
+            "size": {"x": size.x, "y": size.y},
+            "color": (object_color.r, object_color.g, object_color.b, object_color.a),
+            "id": object_id,
+            "text": str(object_id),
+        }
+        websocket_send_message(message)
 
     def draw_text(self, text, x, y, color):
         font = pygame.font.Font(None, 24)
