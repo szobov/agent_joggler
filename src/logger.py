@@ -70,12 +70,12 @@ def setup_logging(name: str) -> None:
             },
             "handlers": {
                 "default": {
-                    "level": "DEBUG",
+                    "level": "INFO",
                     "class": "logging.StreamHandler",
                     "formatter": "colored",
                 },
                 "file": {
-                    "level": "DEBUG",
+                    "level": "INFO",
                     "class": "logging.handlers.RotatingFileHandler",
                     "maxBytes": 1024 * 1024 * 10,
                     "backupCount": 5,
@@ -86,7 +86,7 @@ def setup_logging(name: str) -> None:
             "loggers": {
                 "": {
                     "handlers": ["default", "file"],
-                    "level": "DEBUG",
+                    "level": "INFO",
                     "propagate": True,
                 },
             },
