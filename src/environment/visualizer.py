@@ -71,6 +71,12 @@ class MapVisualizer:
         self.clock = pygame.time.Clock()
 
     def run(self, message_bus: MessageBusProtocol):
+        try:
+            self._run(message_bus=message_bus)
+        finally:
+            websocket_close()
+
+    def _run(self, message_bus: MessageBusProtocol):
         while not message_bus.get_message(MessageTopic.GLOBAL_STOP, wait=False):
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -95,7 +101,6 @@ class MapVisualizer:
             self.draw_agents(message_bus=message_bus)
             pygame.display.flip()  # Update the full display Surface to the screen
             self.clock.tick(60)  # Limit to 60 frames per second
-        websocket_close()
 
     def draw_grid(self):
         websocket_send_message(
