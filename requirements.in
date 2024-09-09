@@ -6,3 +6,5 @@ pygame
 platformdirs
 pyzmq
 dataclasses_avroschema
+aiohttp
+websockets
