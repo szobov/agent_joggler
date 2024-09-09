@@ -7,7 +7,7 @@ name = "agent_joggler"
 
 requires-python = ">=3.12"
 readme = "README.md"
-license = {text = "MIT License"}
+license = {text = "Apache 2.0 License"}
 description = "Multi-agent Path Planning environment with online task assignment"
 authors = [{name = "Sergei Zobov"}]
 maintainers = [{name = "Sergei Zobov"}]
