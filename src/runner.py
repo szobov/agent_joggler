@@ -80,7 +80,7 @@ def _runner(process: Process):
     set_random_seed_if_passed()
 
     message_bus = MessageBus()
-    log = logger.bind(process=process)
+    log = logger.bind(process=process, pid=os.getpid())
     log.info("Starting process...")
     message_bus.subscribe(MessageTopic.GLOBAL_STOP)
     message_bus.subscribe(MessageTopic.GLOBAL_START)
@@ -109,17 +109,21 @@ def _runner(process: Process):
         return
     else:
         log.info("starting process function")
-        result = process.process_function(cast(MessageBusProtocol, message_bus))
+        try:
+            result = process.process_function(cast(MessageBusProtocol, message_bus))
+        except KeyboardInterrupt:
+            log.warning("received Keyboard Interrupt")
+            result = None
         log.info("process function completed", result=result)
         return result
 
 
-def set_exception_logger_future(future: Future):
+def set_exception_logger_future(process_name: str, future: Future):
     def exception_handler(future: Future):
         exception = future.exception()
         if exception is None:
             return
-        logger.exception(exception)
+        logger.exception("Exception in future", process_name=process_name)
 
     future.add_done_callback(exception_handler)
 
@@ -138,7 +142,7 @@ def validate_processes(processes: Sequence[Process]):
 @contextmanager
 def setup_message_bus(executor: ProcessPoolExecutor) -> Iterator[MessageBus]:
     zmq_proxy_future = executor.submit(zmq_proxy_start)
-    set_exception_logger_future(zmq_proxy_future)
+    set_exception_logger_future("zmq_proxy", zmq_proxy_future)
     message_bus = MessageBus()
     message_bus.subscribe(MessageTopic.PROCESS_STARTED)
     message_bus.prepare_publisher(MessageTopic.GLOBAL_START)
@@ -153,9 +157,16 @@ def setup_message_bus(executor: ProcessPoolExecutor) -> Iterator[MessageBus]:
 @contextmanager
 def get_process_executor() -> Iterator[ProcessPoolExecutor]:
     with ProcessPoolExecutor(
-        mp_context=multiprocessing.get_context("fork")
+        mp_context=multiprocessing.get_context("fork"),
     ) as executor:
         yield executor
+        for process in executor._processes.values():
+            if process.is_alive():
+                logger.debug("Killing unstopped process", process=process)
+                try:
+                    process.close()
+                except ValueError:
+                    process.kill()
 
 
 def start_processes(
@@ -166,7 +177,7 @@ def start_processes(
     futures = []
     for process in processes:
         future = start_process(executor, process)
-        set_exception_logger_future(future)
+        set_exception_logger_future(process.name, future)
         futures.append((process, future))
 
     started_processes = set()
