@@ -9,6 +9,7 @@ from websockets.sync.client import ClientConnection, connect
 
 from ..internal_types import Coordinate2D, Map, MapObjectType
 from ..message_transport import MessageBusProtocol, MessageTopic
+from ..utils import env_var_to_bool
 
 
 @lru_cache(maxsize=1)
@@ -18,7 +19,7 @@ def get_socket() -> ClientConnection:
 
 @lru_cache(maxsize=1)
 def is_websocket_enabled() -> bool:
-    return bool(os.getenv("WEB_SOCKET_ENABLED"))
+    return env_var_to_bool(os.getenv("WEB_SOCKET_ENABLED"))
 
 
 def websocket_close():
