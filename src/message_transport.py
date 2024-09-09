@@ -106,7 +106,12 @@ def zmq_proxy_start():
     xpub = _get_zmq_xpub_socket(context)
     xsub = _get_zmq_xsub_socket(context)
     control_rep = _get_zmq_proxy_control_rep_socket(context)
-    zmq.proxy_steerable(xpub, xsub, None, control_rep)
+    try:
+        zmq.proxy_steerable(xpub, xsub, None, control_rep)
+    finally:
+        logger.info("destroying a context of zmq proxy server")
+        context.destroy(linger=1000)
+    logger.info("stopped zmq proxy server")
 
 
 def zmq_proxy_stopper():
@@ -114,6 +119,8 @@ def zmq_proxy_stopper():
     context = _get_zmq_context()
     socket = _get_zmq_proxy_control_req_socket(context)
     socket.send("TERMINATE".encode())
+    context.destroy(linger=1000)
+    logger.info("stopped zmq proxy")
 
 
 class MessageBusProtocol(_t.Protocol):
@@ -202,7 +209,9 @@ class MessageBus:
         self._publish_socket = _get_zmq_publish_socket(context=self._context)
 
     def tear_down(self):
-        self._context.destroy()
+        logger.info("tearing down message bus")
+        self._context.destroy(linger=1000)
+        logger.info("teared down message bus")
 
     def subscribe(self, topic: MessageTopic):
         self._subscribe_socket.subscribe(topic.value.encode())
