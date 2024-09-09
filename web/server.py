@@ -1,14 +1,18 @@
 import asyncio
+import pathlib
 
 import aiohttp
 from aiohttp import web
 
 clients = set()
 
+path_to_static_dir = pathlib.Path(__file__).parent.resolve() / "static"
+
 
 async def index(request):
     del request
-    return web.FileResponse("static/index.html")
+    path_to_index = path_to_static_dir / "index.html"
+    return web.FileResponse(str(path_to_index))
 
 
 async def websocket_handler(request):
@@ -40,7 +44,7 @@ def create_runner():
     app.add_routes(
         [
             web.get("/", index),
-            web.static("/static", "static/", show_index=True),
+            web.static("/static", path_to_static_dir, show_index=True),
             web.get("/ws", websocket_handler),
         ]
     )
@@ -54,7 +58,15 @@ async def start_server(host="0.0.0.0", port=5555):
     await site.start()
 
 
+def main():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(start_server())
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_server())
-    loop.run_forever()
+    main()
