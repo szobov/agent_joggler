@@ -11,11 +11,30 @@ license = {text = "Apache 2.0 License"}
 description = "Multi-agent Path Planning environment with online task assignment"
 authors = [{name = "Sergei Zobov"}]
 maintainers = [{name = "Sergei Zobov"}]
-dynamic = ["version", "dependencies", "optional-dependencies"]
+dynamic = ["version"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.in"]}
-optional-dependencies.test = {file = ["requirements-test.txt"]}
+dependencies = [
+    "numpy",
+    "rich",
+    "structlog",
+    "colorama",
+    "pygame",
+    "platformdirs",
+    "pyzmq",
+    "dataclasses_avroschema",
+    "websockets",
+]
+
+[project.optional-dependencies]
+tests = [
+    "pytest",
+    "pytest-sugar",
+]
+
+dev = [
+    "pyright",
+    "ruff",
+]
 
 
 [tool.pip-tools]
