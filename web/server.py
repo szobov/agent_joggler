@@ -1,8 +1,13 @@
 import asyncio
+import os
 import pathlib
+import logging
+from string import Template
 
 import aiohttp
 from aiohttp import web
+
+logger = logging.getLogger(__name__)
 
 clients = set()
 
@@ -13,6 +18,17 @@ async def index(request):
     del request
     path_to_index = path_to_static_dir / "index.html"
     return web.FileResponse(str(path_to_index))
+
+
+async def visualizer(request):
+    del request
+    ip = os.getenv("WEB_SERVER_EXTERNAL_IP", "localhost")
+    path_to_js = path_to_static_dir / "visualizer.js"
+    content = Template(path_to_js.read_text())
+
+    return web.Response(
+        text=content.safe_substitute(server=ip), content_type="text/javascript"
+    )
 
 
 async def websocket_handler(request):
@@ -44,7 +60,7 @@ def create_runner():
     app.add_routes(
         [
             web.get("/", index),
-            web.static("/static", path_to_static_dir, show_index=True),
+            web.get("/static/visualizer.js", visualizer),
             web.get("/ws", websocket_handler),
         ]
     )
@@ -52,6 +68,7 @@ def create_runner():
 
 
 async def start_server(host="0.0.0.0", port=5555):
+    logger.info(f"server is started: {host}:{port}")
     runner = create_runner()
     await runner.setup()
     site = web.TCPSite(runner, host, port)
@@ -69,4 +86,9 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        format="[%(asctime)s] %(name)s %(levelname)s in "
+        "%(filename)s:%(lineno)d : %(message)s"
+    )
+    logging.getLogger().setLevel(logging.INFO)
     main()
