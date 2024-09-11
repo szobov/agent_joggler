@@ -14,7 +14,7 @@ from ..utils import env_var_to_bool
 
 @lru_cache(maxsize=1)
 def get_socket() -> ClientConnection:
-    return connect("ws://localhost:5555/ws")
+    return connect(f"ws://{os.getenv('WEB_SOCKET_HOST', 'localhost')}:5555/ws")
 
 
 @lru_cache(maxsize=1)
