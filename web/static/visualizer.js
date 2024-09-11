@@ -14,7 +14,7 @@ let unitPixelSize = 40;
 let objectCache = [];
 let renderAllowed = false;
 
-const socket = new WebSocket('ws://127.0.0.1:5555/ws');
+const socket = new WebSocket('ws://$server:5555/ws');
 
 socket.onopen = () => {
     console.log('Connected to WebSocket server.');
