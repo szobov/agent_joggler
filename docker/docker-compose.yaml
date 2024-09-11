@@ -1,0 +1,25 @@
+services:
+  planner:
+    platform: linux/amd64
+    image: local/planner
+    build:
+      dockerfile:
+        docker/planner.Dockerfile
+      context:
+        ..
+    environment:
+      - WEB_SOCKET_HOST=web-interface-for-planner
+      - WEB_SOCKET_ENABLED=true
+    restart: "unless-stopped"
+  web:
+    platform: linux/amd64
+    image: local/web
+    build:
+      dockerfile:
+        docker/web.Dockerfile
+      context:
+        ..
+    hostname:
+      web-interface-for-planner
+    environment:
+      - WEB_SERVER_EXTERNAL_IP=web-interface-for-planner
