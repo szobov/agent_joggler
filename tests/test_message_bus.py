@@ -1,5 +1,5 @@
 from collections import deque
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import structlog
@@ -126,7 +126,6 @@ def test_message_bus_initialization():
             "src.message_transport._get_zmq_publish_socket"
         ) as mock_get_zmq_publish_socket,
     ):
-
         mock_context = MagicMock()
         mock_subscribe_socket = MagicMock()
         mock_publish_socket = MagicMock()
@@ -149,10 +148,9 @@ def test_message_bus_subscribe():
         patch("src.message_transport._get_zmq_subscribe_socket"),
         patch("src.message_transport._get_zmq_publish_socket"),
     ):
-
         message_bus = MessageBus()
         message_bus.subscribe(MessageTopic.ORDERS)
-
+        assert isinstance(message_bus._subscribe_socket.subscribe, Mock)
         message_bus._subscribe_socket.subscribe.assert_called_once_with(
             MessageTopic.ORDERS.value.encode()
         )
@@ -168,13 +166,13 @@ def test_message_bus_send_message():
         patch("src.message_transport._get_zmq_subscribe_socket"),
         patch("src.message_transport._get_zmq_publish_socket"),
     ):
-
         message_bus = MessageBus()
         message = MagicMock(spec=Orders)
         message.serialize.return_value = b"serialized_message"
 
         message_bus.send_message(MessageTopic.ORDERS, message)
 
+        assert isinstance(message_bus._publish_socket.send_multipart, Mock)
         message_bus._publish_socket.send_multipart.assert_called_once_with(
             [MessageTopic.ORDERS.value.encode(), b"serialized_message"]
         )
@@ -187,7 +185,6 @@ def test_message_bus_get_message_from_queue():
         patch("src.message_transport._get_zmq_subscribe_socket"),
         patch("src.message_transport._get_zmq_publish_socket"),
     ):
-
         message_bus = MessageBus()
         message = MagicMock(spec=Orders)
         message_bus._topic_to_received_message[MessageTopic.ORDERS] = deque([message])
@@ -207,7 +204,6 @@ def test_message_bus_get_message_not_in_queue_no_wait():
             "src.message_transport.MessageBus._receive_raw_messages"
         ) as mock_receive_raw_messages,
     ):
-
         message_bus = MessageBus()
         message_bus.subscribe(MessageTopic.ORDERS)
         mock_receive_raw_messages.return_value = None
@@ -230,7 +226,6 @@ def test_message_bus_get_message_with_wait():
             "src.message_transport.MessageBus._receive_raw_messages"
         ) as mock_receive_raw_messages,
     ):
-
         message_bus = MessageBus()
         message = MagicMock(spec=Orders)
         message_bus._topic_to_received_message[MessageTopic.ORDERS] = deque()

@@ -1,6 +1,6 @@
 import pytest
 
-from src.internal_types import Agent, Coordinate2D, Order, Orders, OrderType, TimeT
+from src.internal_types import Agent, Coordinate2D, Order, Orders, OrderType
 from src.path_planning.order_tracker import OrderTracker
 
 

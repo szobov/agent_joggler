@@ -94,8 +94,8 @@ class MapGenerator:
 
         self._generate_clustered_objects(MapObjectType.STACK, opposite_to_type=None)
 
-        assert len(self.map.objects) == sum(
-            self.map.configuration.object_numbers.values()
+        assert (
+            len(self.map.objects) == sum(self.map.configuration.object_numbers.values())
         ), f"{len(self.map.objects)} == {sum(self.map.configuration.object_numbers.values())}"
 
     def _generate_object(
@@ -161,9 +161,7 @@ class MapGenerator:
                 self.map.objects.append(possible_object)
                 return possible_object
             log = log.unbind("coords")
-        assert (
-            False
-        ), f"Unable to place an object in {MAX_ATTEMPTS}. Most likely an unlucky random.seed"
+        assert False, f"Unable to place an object in {MAX_ATTEMPTS}. Most likely an unlucky random.seed"
 
     def _generate_agent(self, agent_id: int):
         maintenance_area = next(

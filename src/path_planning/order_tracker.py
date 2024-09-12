@@ -5,9 +5,9 @@ from collections import defaultdict, deque
 import structlog
 from structlog.typing import WrappedLogger
 
-logger = structlog.getLogger(__name__)
-
 from ..internal_types import Agent, Coordinate2D, Order, Orders, OrderType, TimeT
+
+logger = structlog.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -75,7 +75,6 @@ class OrderTracker:
         return next_order.goal
 
     def validate_finished_tasks(self, cleaned_up_time_step: TimeT, agent: Agent):
-
         for time_stamp, task in reversed(self.finished_orders[agent].copy()):
             if time_stamp < cleaned_up_time_step:
                 return

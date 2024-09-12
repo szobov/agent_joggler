@@ -124,7 +124,6 @@ def zmq_proxy_stopper():
 
 
 class MessageBusProtocol(_t.Protocol):
-
     @_t.overload
     def send_message(
         self, topic: _t.Literal[MessageTopic.MAP], message: Map
@@ -190,7 +189,6 @@ def dump_message_to_filesystem(message: AvroModel):
 
 @dataclass
 class MessageBus:
-
     _publish_socket: zmq.Socket = field(init=False)
     _subscribe_socket: zmq.Socket = field(init=False)
     _context: zmq.Context = field(init=False)

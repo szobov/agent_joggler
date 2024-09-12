@@ -259,13 +259,11 @@ def _post_iteration(
     agent_id_to_goal: dict[AgentIdT, Coordinate2D],
     cleanedup_blocking_agents: set[Agent],
 ):
-
     min_last_time_step = min(
         _last_time_step_from_agent_paths_iterator(reservation_table)
     )
     SEND_AGENT_PATH_TIME_THRESHOLD = time_window * 2
     for agent, path in reservation_table.agents_paths.items():
-
         last_time_step = path[-1].time_step
         for node_index, node in enumerate(reversed(path), start=1):
             if (
@@ -302,7 +300,7 @@ def _post_iteration(
         goal_node = agent_id_to_goal.get(agent.agent_id)
         for node in path:
             if (
-                not agent in order_tracker.assigned_order
+                agent not in order_tracker.assigned_order
                 and len(order_tracker.not_assigned_orders) == 0
             ):
                 break
@@ -335,7 +333,6 @@ def windowed_hierarhical_cooperative_a_start(
     time_window: TimeT,
     reservation_table: ReservationTable,
 ) -> None:
-
     logger.info("waiting for first orders")
     orders = message_bus.get_message(topic=MessageTopic.ORDERS, wait=True)
     assert orders

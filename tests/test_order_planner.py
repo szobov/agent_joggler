@@ -3,7 +3,13 @@ from unittest.mock import Mock
 import pytest
 
 from src.environment.generator import Map
-from src.internal_types import Coordinate2D, MapObject, MapObjectType, Order
+from src.internal_types import (
+    Coordinate2D,
+    MapConfiguration,
+    MapObject,
+    MapObjectType,
+    Order,
+)
 from src.message_transport import MessageTopic
 from src.orders.order_planner import OrderPlanner, Pallet, Stack, get_process
 
@@ -27,7 +33,10 @@ def mock_map():
             object_id=3,
         ),
     ]
-    return Map(configuration=None, objects=map_objects)
+    return Map(
+        configuration=MapConfiguration(42, 42, object_sizes={}, object_numbers={}),
+        objects=map_objects,
+    )
 
 
 def test_stack_operations():
