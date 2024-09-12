@@ -11,6 +11,9 @@ services:
       - WEB_SOCKET_HOST=web-interface-for-planner
       - WEB_SOCKET_ENABLED=true
     restart: "unless-stopped"
+    depends_on:
+      web:
+        condition: "service_healthy"
   web:
     platform: linux/amd64
     image: local/web
