@@ -28,4 +28,7 @@ RUN --mount=type=cache,target=/home/${USERNAME}/.cache/uv,uid=${USER_UID},gid=${
 
 COPY --chown=$USER_UID:$USER_GID web/ /usr/src/app/src/
 
+HEALTHCHECK  --interval=3s --timeout=3s \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:5555/ || exit 1
+
 ENTRYPOINT ["/bin/sh", "-c", "WEB_SERVER_EXTERNAL_IP=`awk 'END{print $1}' /etc/hosts` /usr/src/app/.venv/bin/python src/server.py"]
