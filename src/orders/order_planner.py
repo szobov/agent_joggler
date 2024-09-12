@@ -165,7 +165,7 @@ class OrderPlanner:
                         pallet_id=current_pallet.object_id,
                     )
                 )
-        # order_type = OrderType.DELIVERY
+        order_type = OrderType.DELIVERY
         pickup_station = random.choice(self._pickup_stations)
         order_sequence.append(
             Order(
