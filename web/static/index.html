@@ -9,18 +9,58 @@
         body {
             margin: 0;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             height: 100vh;
             background-color: #000;
+            font-family: Arial, sans-serif;
         }
         canvas {
+            border: 1px solid #fff;
+        }
+        .legend {
+            display: flex;
+            margin-top: 10px;
+            gap: 20px;
+            color: white;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
             border: 1px solid #fff;
         }
     </style>
 </head>
 <body>
     <canvas id="canvas" width="800" height="600"></canvas>
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: red;"></div>
+            <span>AGENT</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: green;"></div>
+            <span>MAINTENANCE AREA</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: gray;"></div>
+            <span>PILLAR</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: yellow;"></div>
+            <span>STACK</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background-color: blue;"></div>
+            <span>PICKUP STATION</span>
+        </div>
+    </div>
     <script src="static/visualizer.js"></script>
 </body>
 </html>
