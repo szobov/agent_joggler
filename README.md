@@ -3,7 +3,6 @@
 **aggent_joggler** is a warehouse simulator that implements multi-agent path planning with online task assignments. It simulates a dynamic environment with agents, blocked areas, stacks (with pallets), and pickup zones. The simulator continuously generates orders to transport pallets from stacks to pickup areas and redistributes pallets between stacks when necessary.
 
 ![visualization](./docs/statics/visualization.gif)
-
 ## Disclaimer
 
 This project started after my presentation at [Berlin Robotics Meetup](https://www.meetup.com/berlin-robotics-meetup/events/292679480/?eventOrigin=group_past_events) ([slides](https://github.com/szobov/seminars/tree/main/cooperative-path-planning-seminar)), when I was asked a reasonable question: "Where is the code?"
@@ -18,9 +17,9 @@ So please take it with a grain of salt, and don't expect it to be polished.
 - **Dynamic Task Assignment**: Tasks are continuously assigned to agents, imitating a continuous stream of orders.
 - **Path Rebuilding**: Agents can rebuild their paths if blocked, enhancing flexibility and performance.
 - **Multiprocessing**: Uses Python's `concurrent.futures` module for concurrent process execution.
-- **ZeroMQ Communication**: Efficient message passing between simulator components.
+- **[ZeroMQ](https://zeromq.org) Communication**: Efficient message passing between simulator components.
 - **Two UI Modes**:
-  - **PyGame Interface**: View the simulation in a desktop environment.
+  - **[PyGame](https://www.pygame.org) Interface**: View the simulation in a desktop environment.
   - **Dockerized Web Interface**: Run the simulation in docker and interact via a web browser.
 
 ## How It Works
