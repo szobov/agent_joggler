@@ -82,9 +82,9 @@ colorama==0.4.6 \
 dacite==1.8.1 \
     --hash=sha256:cc31ad6fdea1f49962ea42db9421772afe01ac5442380d9a99fcf3d188c61afe
     # via dataclasses-avroschema
-dataclasses-avroschema==0.62.11 \
-    --hash=sha256:14ddc7b96a0717947b4b32ad9b7a3e9584ef807279cb7549cbb85ef2f5b373a6 \
-    --hash=sha256:31b333d98effafabb641217e9c953c1193440de3851888192eab26f92705cbda
+dataclasses-avroschema==0.63.0 \
+    --hash=sha256:81847f11f1dbaf6be940796a63c6d9c64885472d279d1811b2a35bb553220d29 \
+    --hash=sha256:f20ca5e7a1cbdbe1b1cd2e775744f2835bbf46009d8f2f2d72acc481721e0125
     # via agent-joggler (pyproject.toml)
 fastavro==1.9.7 \
     --hash=sha256:0b2f9bafa167cb4d1c3dd17565cb5bf3d8c0759e42620280d1760f1e778e07fc \
@@ -196,9 +196,9 @@ packaging==24.1 \
     # via
     #   pytest
     #   pytest-sugar
-platformdirs==4.3.2 \
-    --hash=sha256:9e5e27a08aa095dd127b9f2e764d74254f482fef22b0970773bfba79d091ab8c \
-    --hash=sha256:eb1c8582560b34ed4ba105009a4badf7f6f85768b30126f351328507b2beb617
+platformdirs==4.3.3 \
+    --hash=sha256:50a5450e2e84f44539718293cbb1da0a0885c9d14adf21b77bae4e66fc99d9b5 \
+    --hash=sha256:d4e0b7d8ec176b341fb03cb11ca12d0276faa8c485f9cd218f613840463fc2c0
     # via agent-joggler (pyproject.toml)
 pluggy==1.5.0 \
     --hash=sha256:2cffa88e94fdc978c4c574f15f9e59b7f4201d439195c3715ca9e2486f1d0cf1 \
