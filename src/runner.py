@@ -123,7 +123,7 @@ def set_exception_logger_future(process_name: str, future: Future):
         exception = future.exception()
         if exception is None:
             return
-        logger.exception("Exception in future", process_name=process_name)
+        logger.exception(f"Exception in future: {exception}", process_name=process_name)
 
     future.add_done_callback(exception_handler)
 
