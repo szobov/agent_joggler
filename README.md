@@ -1,12 +1,18 @@
 ## Introduction
 
-**aggent_joggler** is a warehouse simulator that implements multi-agent path planning with online task assignments. It simulates a dynamic environment with agents, blocked areas, stacks (with pallets), and pickup zones. The simulator continuously generates orders to transport pallets from stacks to pickup areas and redistributes pallets between stacks when necessary.
+**aggent_joggler** is a warehouse simulator that implements multi-agent path planning with online task assignments.
+
+It simulates a dynamic environment with agents, blocked areas, stacks (with pallets), and pickup zones.
+The simulator continuously generates orders to transport pallets from stacks to pickup areas and redistributes pallets between stacks when necessary.
 
 ![visualization](./docs/statics/visualization.gif)
+
 ## Disclaimer
 
-This project started after my presentation at [Berlin Robotics Meetup](https://www.meetup.com/berlin-robotics-meetup/events/292679480/?eventOrigin=group_past_events) ([slides](https://github.com/szobov/seminars/tree/main/cooperative-path-planning-seminar)), when I was asked a reasonable question: "Where is the code?"
+This project started after my presentation at [Berlin Robotics Meetup](https://www.meetup.com/berlin-robotics-meetup/events/292679480/?eventOrigin=group_past_events) ([slides](https://github.com/szobov/seminars/tree/main/cooperative-path-planning-seminar), [video](https://youtu.be/q7jrjtuAsH8)), when I was asked a reasonable question: "Where is the code?"
+
 The question motivated me to spend 15-20 minutes a day writing this project.
+
 Another reason was that I didn't find other easy-to-grok implementations of Windowed Hierarchical Cooperative A\* algorithms, so I decided to implement mine.
 So please take it with a grain of salt, and don't expect it to be polished.
 
@@ -41,7 +47,11 @@ The entry point is `./run-in-docker.bash`.
 It requires only a bash-compatible shell, any Python, and the latest [docker](https://www.docker.com).
 It provides a visualization as an HTML page.
 
+<details>
+  <summary>Video example</summary>
+
 ![run-in-docker](./docs/statics/run-in-docker.gif)
+</details>
 
 ### Local
 
@@ -49,7 +59,11 @@ The entry point is `./run-locally.bash`.
 It will install all system dependencies and run a GUI version of the visualization.
 Better suitable for developing.
 
-![run-in-docker](./docs/statics/run-locally.gif)
+<details>
+  <summary>Video example</summary>
+
+![run-locally](./docs/statics/run-locally.gif)
+</details>
 
 ## Contributing
 
