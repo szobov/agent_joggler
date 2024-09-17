@@ -22,10 +22,11 @@ jobs:
         uv pip sync requirements-test.txt
     - name: Test with pytest
       run: |
-        pytest .
+        .venv/bin/pytest .
     - name: Install linting dependencies
       run: |
+        source .venv/bin/activate
         uv pip sync requirements-dev.txt
     - name: Lint
       run: |
-        pre-commit run -a
+        .venv/bin/pre-commit run -a
