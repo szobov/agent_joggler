@@ -36,7 +36,7 @@ def get_first_process() -> Process:
         subsribe_topics=(),
         publish_topics=(MessageTopic.AGENT_PATH,),
         process_function=send_message,
-        process_finish_policy=ProcessFinishPolicy.STOP_ALL,
+        process_finish_policy=ProcessFinishPolicy.NOTHING,
     )
 
 
@@ -62,8 +62,8 @@ def get_second_process() -> Process:
 
 def test_message_bus():
     processes = (
-        get_first_process(),
         get_second_process(),
+        get_first_process(),
     )
 
     with get_process_executor() as executor:
