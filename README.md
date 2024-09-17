@@ -32,7 +32,7 @@ So please take it with a grain of salt, and don't expect it to be polished.
 
 The simulator follows these key principles:
 
-- **Warehouse layout generation**: First, the layout grid is configured. Then, the objects are iteratively placed, such as the maintenance area (a place where agents start and come to idle), agents, pillars (unpassable areas), stacks, and pickup areas. A stack represents the set of enumerated pallets. 
+- **Warehouse layout generation**: First, the layout grid is configured. Then, the objects are iteratively placed, such as the maintenance area (a place where agents start and come to idle), agents, pillars (unpassable areas), stacks, and pickup areas. A stack represents the set of enumerated pallets.
 - **Order Assignment**: Orders to move pallets are continuously generated and assigned to agents. There are three types of orders: free up, pickup, and delivery. An order always represents the movement of a pallet from the stack to pick up areas or to another stack. Since the delivery order may require a movement of a pallet from the middle or the top of the stack, the pallets that are blocking are redistributed to other stacks.
 - **Path Planning**: Agents plan their paths using an enhanced WHCA* algorithm to execute the orders. The path for the agent is always sent "in the past" to create a space for replanning if some agents are blocked.
 - **Visualization**: Show the simulation in "real" time. The unit of time is always set to **1**, which, in the current setup, is equal to one second. The agents are supposed to move with a constant speed, but the system is designed to easily extend it for non-constant speed.
