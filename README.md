@@ -1,6 +1,6 @@
 ## Introduction
 
-**aggent_joggler** is a warehouse simulator that implements multi-agent path planning with online task assignments.
+**agent_joggler** is a warehouse simulator that implements multi-agent path planning with online task assignments.
 
 It simulates a dynamic environment with agents, blocked areas, stacks (with pallets), and pickup zones.
 The simulator continuously generates orders to transport pallets from stacks to pickup areas and redistributes pallets between stacks when necessary.
